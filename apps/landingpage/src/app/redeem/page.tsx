@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Copy, Check, ExternalLink, Loader2, Sparkles, Key, BookOpen } from 'lucide-react'
+import { Search, Copy, Check, ExternalLink, Loader2, Sparkles, Key, BookOpen, Mail, User, Clock, Hash } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -211,25 +211,31 @@ export default function RedeemPage() {
                           (showEmail && showPassword) ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"
                         )}>
                           {showEmail && (
-                            <div className="space-y-3">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] ml-1">Email / Username</label>
-                              <div className="flex items-center justify-between bg-background p-4 rounded-2xl border border-border group transition-all hover:border-primary">
-                                <span className="text-base font-mono text-foreground font-medium break-all mr-4">{result.account.email}</span>
-                                <button onClick={() => copyToClipboard(result.account.email)} className="text-primary hover:text-[#ef4444] transition-colors shrink-0 p-1">
-                                  <Copy className="size-5" />
-                                </button>
+                            <div className="flex items-center gap-4 bg-background px-6 py-4 rounded-2xl border border-border group transition-all hover:border-primary">
+                              <div className="bg-primary/10 p-2.5 rounded-xl shrink-0">
+                                <Mail className="size-5 text-primary" />
                               </div>
+                              <div className="flex-grow overflow-hidden">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Email / Username</p>
+                                <p className="text-base font-mono font-medium text-foreground truncate">{result.account.email}</p>
+                              </div>
+                              <button onClick={() => copyToClipboard(result.account.email)} className="text-primary hover:text-destructive transition-colors shrink-0 p-1">
+                                <Copy className="size-5" />
+                              </button>
                             </div>
                           )}
                           {showPassword && (
-                            <div className="space-y-3">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] ml-1">Password</label>
-                              <div className="flex items-center justify-between bg-background p-4 rounded-2xl border border-border group transition-all hover:border-primary">
-                                <span className="text-base font-mono text-foreground font-medium break-all mr-4">{result.account.password}</span>
-                                <button onClick={() => copyToClipboard(result.account.password)} className="text-primary hover:text-[#ef4444] transition-colors shrink-0 p-1">
-                                  <Copy className="size-5" />
-                                </button>
+                            <div className="flex items-center gap-4 bg-background px-6 py-4 rounded-2xl border border-border group transition-all hover:border-primary">
+                              <div className="bg-primary/10 p-2.5 rounded-xl shrink-0">
+                                <Key className="size-5 text-primary" />
                               </div>
+                              <div className="flex-grow overflow-hidden">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Password</p>
+                                <p className="text-base font-mono font-medium text-foreground truncate">{result.account.password}</p>
+                              </div>
+                              <button onClick={() => copyToClipboard(result.account.password)} className="text-primary hover:text-destructive transition-colors shrink-0 p-1">
+                                <Copy className="size-5" />
+                              </button>
                             </div>
                           )}
                         </div>
@@ -239,47 +245,63 @@ export default function RedeemPage() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {showProfile && (
                             <div className="flex items-center gap-4 bg-background px-6 py-4 rounded-2xl border border-border">
-                              <div className="bg-primary/10 p-2.5 rounded-xl">
-                                <Check className="size-5 text-primary" />
+                              <div className="bg-primary/10 p-2.5 rounded-xl shrink-0">
+                                <User className="size-5 text-primary" />
                               </div>
-                              <div>
+                              <div className="flex-grow overflow-hidden">
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Nama Profil</p>
-                                <p className="text-base font-medium text-foreground">{result.account.profile_name || '-'}</p>
+                                <p className="text-base font-medium text-foreground truncate">{result.account.profile_name || '-'}</p>
                               </div>
                             </div>
                           )}
                           {showExpired && (
                             <div className="flex items-center gap-4 bg-background px-6 py-4 rounded-2xl border border-border">
-                              <div className="bg-primary/10 p-2.5 rounded-xl">
-                                <Check className="size-5 text-primary" />
+                              <div className="bg-primary/10 p-2.5 rounded-xl shrink-0">
+                                <Clock className="size-5 text-primary" />
                               </div>
-                              <div>
+                              <div className="flex-grow overflow-hidden">
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Masa Aktif</p>
-                                <p className="text-base font-medium text-foreground">{new Date(result.account.expired_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                <p className="text-base font-medium text-foreground truncate">{new Date(result.account.expired_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
                               </div>
                             </div>
                           )}
                         </div>
                       )}
 
-                      {customFields.length > 0 && (
-                        <div className={cn(
-                          "grid gap-8",
-                          customFields.length > 1 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"
-                        )}>
-                          {customFields.map((field, idx) => (
-                            <div key={idx} className="space-y-3">
-                              <label className="text-[10px] font-medium text-slate-400 uppercase tracking-[0.3em] ml-1">{field.label}</label>
-                              <div className="flex items-center justify-between bg-background p-4 rounded-2xl border border-border group transition-all hover:border-primary">
-                                <span className="text-base font-mono text-foreground font-medium break-all mr-4">{resolve(field.value)}</span>
-                                <button onClick={() => copyToClipboard(resolve(field.value))} className="text-primary hover:text-destructive transition-colors shrink-0 p-1">
-                                  <Copy className="size-5" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      {(() => {
+                        const validCustomFields = customFields.filter(field => {
+                          const resolved = resolve(field.value);
+                          // Hide if it's empty or still contains placeholder syntax
+                          return resolved && !resolved.includes('$$');
+                        });
+                        
+                        if (validCustomFields.length === 0) return null;
+                        
+                        return (
+                          <div className={cn(
+                            "grid gap-8",
+                            validCustomFields.length > 1 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"
+                          )}>
+                            {validCustomFields.map((field, idx) => {
+                              const resolvedValue = resolve(field.value);
+                              return (
+                                <div key={idx} className="flex items-center gap-4 bg-background px-6 py-4 rounded-2xl border border-border group transition-all hover:border-primary">
+                                  <div className="bg-primary/10 p-2.5 rounded-xl shrink-0">
+                                    <Hash className="size-5 text-primary" />
+                                  </div>
+                                  <div className="flex-grow overflow-hidden">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">{field.label}</p>
+                                    <p className="text-base font-mono font-medium text-foreground truncate">{resolvedValue}</p>
+                                  </div>
+                                  <button onClick={() => copyToClipboard(resolvedValue)} className="text-primary hover:text-destructive transition-colors shrink-0 p-1">
+                                    <Copy className="size-5" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
 
                       {showInstruction && result.voucher.product_variant?.copy_template && (
                         <div className="mt-4 p-8 bg-primary/10 rounded-[32px] border border-primary/20 border-l-8 border-l-primary">
