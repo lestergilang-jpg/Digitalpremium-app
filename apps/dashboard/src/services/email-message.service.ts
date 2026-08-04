@@ -59,7 +59,7 @@ export function EmailMessageServiceGenerator(apiUrl: string, accessToken: string
     const response = await fetch(`${apiUrl}/email-message/cleanup`, {
       method: 'DELETE',
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
+        'Authorization': `VC ${accessToken}`,
         'X-Tenant-ID': tenantId,
       },
     })
