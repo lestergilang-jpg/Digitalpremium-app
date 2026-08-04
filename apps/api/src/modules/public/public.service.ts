@@ -357,7 +357,8 @@ export class PublicService {
       const stockStatus = await this.getStockStatus(tenantId);
       const variantStock = stockStatus.find(s => s.product_variant_id === variant.id);
       if (!variantStock || variantStock.stock <= 0) {
-        throw new ServiceUnavailableException('Stok untuk varian ini sedang habis');
+        const fullVariantName = (variant as any).product?.name ? `${(variant as any).product.name} ${variant.name}` : variant.name;
+        throw new ServiceUnavailableException(`Stok untuk ${fullVariantName} habis silahkan hubungi admin`);
       }
 
       // 3. Create order record (Payment Status: PENDING)
