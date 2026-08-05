@@ -129,14 +129,56 @@ export class NetflixAutoReloadService {
 
       // STEP 5: Smart Navigation - Deteksi apakah langsung ke Checkout atau perlu pilih Plan
       this.ctx.logger.info(`[AutoReload][${email}] Mendeteksi halaman selanjutnya...`);
-      const nextStep = await Promise.race([
-        getWelcomeBackHeading(page).waitFor({ state: 'visible', timeout: 15000 }).then(() => 'step5' as const),
-        getChangePlanLink(page).waitFor({ state: 'visible', timeout: 15000 }).then(() => 'newUI' as const),
-        getLegalCheckbox(page).waitFor({ state: 'visible', timeout: 15000 }).then(() => 'step9' as const),
-      ]).catch(() => 'timeout' as const);
+      const _ = await Promise.race([
+        getWelcomeBackHeading(page).waitFor({ state: 'visible', timeout: 15000 }),
+        getChangePlanLink(page).waitFor({ state: 'visible', timeout: 15000 }),
+        getLegalCheckbox(page).waitFor({ state: 'visible', timeout: 15000 }),
+      ]).catch(() => null);
+
+      const isLegalVisible = await getLegalCheckbox(page).isVisible().catch(() => false);
+      const isChangePlanVisible = await getChangePlanLink(page).isVisible().catch(() => false);
+      const isWelcomeVisible = await getWelcomeBackHeading(page).isVisible().catch(() => false);
+
+      let nextStep: 'step9' | 'newUI' | 'step5' | 'timeout' = 'timeout';
+      if (isLegalVisible) {
+        nextStep = 'step9';
+      } else if (isChangePlanVisible) {
+        nextStep = 'newUI';
+      } else if (isWelcomeVisible) {
+        nextStep = 'step5';
+      }
 
       if (nextStep === 'step9') {
-        this.ctx.logger.info(`[AutoReload][${email}] Terdeteksi langsung di halaman checkout, melewati Step 5-8.`);
+        this.ctx.logger.info(`[AutoReload][${email}] Terdeteksi langsung di halaman checkout, akan memilih plan terlebih dahulu dengan klik Ubah.`);
+        
+        // Klik link Ubah
+        const isChangePlanVisible = await getChangePlanLink(page).isVisible().catch(() => false);
+        if (isChangePlanVisible) {
+          await getChangePlanLink(page).click();
+          await this.ctx.sleep(2000);
+
+          // STEP 6: Pilih plan
+          const isMobilePlan = /harian|mingguan/i.test(variant_name);
+          const planLabel = isMobilePlan ? getMobilePlanLabel(page) : getStandardPlanLabel(page);
+          const planName = isMobilePlan ? `Ponsel (${PLAN_MOBILE_ID})` : `Standar (${PLAN_STANDARD_ID})`;
+          this.ctx.logger.info(`[AutoReload][${email}] Memilih plan: ${planName}`);
+          await planLabel.waitFor({ state: 'visible', timeout: 15000 });
+          await planLabel.click();
+          await this.ctx.sleep(1000);
+
+          // STEP 7: Klik Berikutnya setelah pilih plan
+          await getNextPlanButton(page).waitFor({ state: 'visible', timeout: 10000 });
+          await getNextPlanButton(page).click();
+          await this.ctx.sleep(2000);
+          
+          // Cek apakah masuk ke halaman Yang Terakhir (Step 8) sebelum ke checkout lagi
+          const isStep8 = await getLastStepHeading(page).isVisible({ timeout: 5000 }).catch(() => false);
+          if (isStep8) {
+             this.ctx.logger.info(`[AutoReload][${email}] Halaman Yang Terakhir muncul, mengklik Berikutnya...`);
+             await getLastStepNextButton(page).click();
+             await this.ctx.sleep(2000);
+          }
+        }
       } else if (nextStep === 'newUI') {
         this.ctx.logger.info(`[AutoReload][${email}] Terdeteksi UI baru (ada link Ubah Plan).`);
         await getChangePlanLink(page).click();
