@@ -357,4 +357,11 @@ export class PublicController {
   ) {
     return this.publicService.getShortUrl(code);
   }
+
+  @Get('task-status/:taskId')
+  async checkTaskStatus(
+    @Param('taskId') taskId: string,
+  ) {
+    return this.publicService.checkTaskStatus(taskId);
+  }
 }

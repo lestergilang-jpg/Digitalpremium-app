@@ -1,8 +1,10 @@
 import { Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'node:crypto';
 import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { TASK_QUEUE_REPOSITORY, TENANT_REPOSITORY } from 'src/constants/database.const';
+import { SHORT_URL_REPOSITORY, TASK_QUEUE_REPOSITORY, TENANT_REPOSITORY } from 'src/constants/database.const';
+import { ShortUrl } from 'src/database/models/short-url.model';
 import { TaskQueue } from 'src/database/models/task-queue.model';
 import { Tenant } from 'src/database/models/tenant.model';
 import { PostgresProvider } from 'src/database/postgres.provider';
@@ -26,7 +28,8 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     private readonly configService: ConfigService,
     private readonly postgresProvider: PostgresProvider,
     @Inject(TENANT_REPOSITORY) private readonly tenantRepository: typeof Tenant,
-    @Inject(TASK_QUEUE_REPOSITORY) private readonly taskQueueRepository: typeof TaskQueue
+    @Inject(TASK_QUEUE_REPOSITORY) private readonly taskQueueRepository: typeof TaskQueue,
+    @Inject(SHORT_URL_REPOSITORY) private readonly shortUrlRepository: typeof ShortUrl,
   ) {}
 
   afterInit(server: Server) {
@@ -180,8 +183,80 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const transaction = await this.postgresProvider.transaction();
     try {
       await this.postgresProvider.setSchema('master', transaction);
+      
+      const task = await this.taskQueueRepository.findByPk(data.taskId, { transaction });
+      if (!task) {
+        throw new Error(`Task with id ${data.taskId} not found`);
+      }
+
+      let enrichedPayload = data.payload;
+
+      if (task.context === 'NETFLIX_GET_TOKEN' && data.status === 'COMPLETED') {
+        const token = data.payload?.token;
+        if (!token) {
+          throw new Error('No token returned from bot for NETFLIX_GET_TOKEN task');
+        }
+
+        const tenantId = task.tenant_id;
+        const pcUrl = `https://www.netflix.com/login?nftoken=${token}`;
+        const mobileUrl = `https://www.netflix.com/unsupported?nftoken=${token}`;
+        const tvUrl = `https://www.netflix.com/tv9?nftoken=${token}`;
+        const generalUrl = `https://www.netflix.com/account?nftoken=${token}`;
+
+        const generateShort = async (url: string) => {
+          const code = crypto.randomBytes(4).toString('hex');
+          const expiresAt = new Date();
+          expiresAt.setHours(expiresAt.getHours() + 24);
+          await this.shortUrlRepository.create(
+            { id: code, target_url: url, expires_at: expiresAt },
+            { transaction }
+          );
+          return code;
+        };
+
+        const [pcCode, mobileCode, tvCode, generalCode] = await Promise.all([
+          generateShort(pcUrl),
+          generateShort(mobileUrl),
+          generateShort(tvUrl),
+          generateShort(generalUrl)
+        ]);
+
+        let landingUrl = process.env.LANDING_URL || 'digitalpremium.id';
+        if (!landingUrl.startsWith('http')) {
+          landingUrl = `https://${landingUrl}`;
+        }
+        let baseUrl = landingUrl;
+        try {
+          const url = new URL(landingUrl);
+          if (!url.hostname.startsWith(`${tenantId}.`)) {
+            url.hostname = `${tenantId}.${url.hostname}`;
+          }
+          baseUrl = url.toString().replace(/\/$/, '');
+        } catch (e) {
+          const cleanBase = landingUrl.replace('https://', '').replace('http://', '');
+          baseUrl = `https://${tenantId}.${cleanBase}`;
+        }
+
+        const tenant = await this.tenantRepository.findByPk(tenantId, { transaction });
+        if (tenant && tenant.custom_domain) {
+          baseUrl = `https://${tenant.custom_domain.toLowerCase()}`;
+        }
+
+        enrichedPayload = {
+          token,
+          pcLink: `${baseUrl}/l/${pcCode}`,
+          mobileLink: `${baseUrl}/l/${mobileCode}`,
+          tvLink: `${baseUrl}/l/${tvCode}`,
+          generalLink: `${baseUrl}/l/${generalCode}`
+        };
+      }
+
       await this.taskQueueRepository.update(
-        { status: data.status, error_message: data.message },
+        { 
+          status: data.status, 
+          error_message: data.message,
+          payload: data.status === 'COMPLETED' && enrichedPayload ? JSON.stringify(enrichedPayload) : task.payload
+        },
         {
           where: {
             id: data.taskId,
@@ -191,6 +266,13 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       );
       await transaction.commit();
       conn.inflight -= conn.inflight === 0 ? 0 : 1;
+
+      // Emit event ke frontend (contoh eventName: task:TASK_ID:done)
+      this.sendEvent(`task:${data.taskId}:done`, {
+        status: data.status,
+        message: data.message,
+        payload: enrichedPayload, 
+      });
     }
     catch (e) {
       this.logger.error(

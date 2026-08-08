@@ -6,6 +6,7 @@ export interface ConnectionTaskDoneData {
   taskId: string;
   status: 'COMPLETED' | 'FAILED';
   message?: string;
+  payload?: any; // Bot bisa kirim data hasil (misal: token Netflix)
 }
 
 export interface ConnectionTaskRejectData {

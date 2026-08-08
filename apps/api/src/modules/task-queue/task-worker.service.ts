@@ -10,6 +10,7 @@ import {
   NETFLIX_AUTO_RELOAD,
   NETFLIX_AUTO_UPGRADE,
   NETFLIX_LOGIN_TV,
+  NETFLIX_GET_TOKEN,
   NETFLIX_RESET_PASSWORD,
   SUBS_END_NOTIFY,
   UNFREEZE_ACCOUNT,
@@ -136,7 +137,7 @@ export class TaskWorkerService {
     }
   }
 
-  @Cron('*/5 * * * * *')
+  @Cron('*/1 * * * * *')
   async dispatchReadyTasks() {
     const now = Date.now();
 
@@ -395,6 +396,9 @@ export class TaskWorkerService {
         else if (tm.taskData.context === NETFLIX_LOGIN_TV) {
           await this.taskHelperService.netflixLoginTv(tm.taskData.id, tm.taskData.tenant_id, tm.taskData.payload as any);
         }
+        else if (tm.taskData.context === NETFLIX_GET_TOKEN) {
+          await this.taskHelperService.netflixGetToken(tm.taskData.id, tm.taskData.tenant_id, tm.taskData.payload as { email: string; target_bot?: string });
+        }
         else if (tm.taskData.context === UNFREEZE_ACCOUNT) {
           await this.taskHelperService.unfreezeAccount(tm.taskData.tenant_id, tm.taskData.payload as AccountUnfreezePayload);
         }
@@ -415,6 +419,7 @@ export class TaskWorkerService {
           NETFLIX_AUTO_RELOAD,
           NETFLIX_AUTO_UPGRADE,
           NETFLIX_LOGIN_TV,
+          NETFLIX_GET_TOKEN,
         ].includes(tm.taskData.context);
 
         taskQueueUpdates.push({

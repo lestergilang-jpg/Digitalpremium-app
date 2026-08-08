@@ -18,6 +18,7 @@ export interface TaskDoneData {
   taskId: string;
   status: 'COMPLETED' | 'FAILED';
   message?: string;
+  payload?: any;
 }
 
 export interface RejectTaskData {

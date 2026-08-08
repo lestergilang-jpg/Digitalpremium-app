@@ -64,6 +64,7 @@ import {
 import { API_URL } from '@/dashboard/constants/api-url.cont'
 import { useGlobalAlertDialog } from '@/dashboard/context-providers/alert-dialog.provider'
 import { useAuth } from '@/dashboard/context-providers/auth.provider'
+import { useSocket } from '@/dashboard/context-providers/socket.provider'
 import { copyAccountTemplate } from '@/dashboard/lib/copy-template'
 import { formatRupiah } from '@/dashboard/lib/currency.util'
 import { formatDateIdStandard } from '@/dashboard/lib/time-converter.util'
@@ -82,6 +83,7 @@ function RouteComponent() {
   const searchParam = Route.useSearch()
   const navigate = Route.useNavigate()
   const auth = useAuth()
+  const { socket } = useSocket()
   const queryClient = useQueryClient()
   const { showAlertDialog, hideAlertDialog } = useGlobalAlertDialog()
   const transactionService = TransactionServiceGenerator(
@@ -165,9 +167,43 @@ function RouteComponent() {
       if (netflixTokenCache[account.id]) {
         return netflixTokenCache[account.id]
       }
-      const data = await accountService.getNetflixToken(account.id)
-      setNetflixTokenCache(prev => ({ ...prev, [account.id]: data }))
-      return data
+      const response = await accountService.getNetflixToken(account.id)
+      if (response.status === 'processing') {
+        if (!socket) {
+          throw new Error('Koneksi socket terputus, silakan coba lagi')
+        }
+        
+        const tokenData = await new Promise((resolve, reject) => {
+          const eventName = `task:${response.taskId}:done`
+          socket.emit('subscribe-event', { eventName })
+          
+          const handleTokenEvent = (data: { eventName: string, payload: any }) => {
+            if (data.eventName === eventName) {
+              socket.off('event', handleTokenEvent)
+              socket.emit('unsubscribe-event', { eventName })
+              
+              if (data.payload.status === 'COMPLETED') {
+                resolve(data.payload.payload)
+              } else {
+                reject(new Error(data.payload.message || 'Gagal memproses token dari Bot'))
+              }
+            }
+          }
+          
+          socket.on('event', handleTokenEvent)
+          
+          setTimeout(() => {
+            socket.off('event', handleTokenEvent)
+            socket.emit('unsubscribe-event', { eventName })
+            reject(new Error('Bot tidak merespons dalam 30 detik (Timeout)'))
+          }, 30000)
+        })
+        
+        setNetflixTokenCache(prev => ({ ...prev, [account.id]: tokenData as any }))
+        return tokenData as any
+      }
+      setNetflixTokenCache(prev => ({ ...prev, [account.id]: response }))
+      return response
     }
     
     toast.promise(

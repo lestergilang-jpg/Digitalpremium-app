@@ -38,6 +38,7 @@ import {
   LockKeyholeOpen,
   Link2,
   ExternalLink,
+  Loader2,
   Package,
   Monitor,
   Pin,
@@ -649,9 +650,43 @@ function RouteComponent() {
       if (netflixTokenCache[account.id]) {
         return netflixTokenCache[account.id]
       }
-      const data = await accountService.getNetflixToken(account.id)
-      setNetflixTokenCache(prev => ({ ...prev, [account.id]: data }))
-      return data
+      const response = await accountService.getNetflixToken(account.id)
+      if (response.status === 'processing') {
+        if (!socket) {
+          throw new Error('Koneksi socket terputus, silakan coba lagi')
+        }
+        
+        const tokenData = await new Promise((resolve, reject) => {
+          const eventName = `task:${response.taskId}:done`
+          socket.emit('subscribe-event', { eventName })
+          
+          const handleTokenEvent = (data: { eventName: string, payload: any }) => {
+            if (data.eventName === eventName) {
+              socket.off('event', handleTokenEvent)
+              socket.emit('unsubscribe-event', { eventName })
+              
+              if (data.payload.status === 'COMPLETED') {
+                resolve(data.payload.payload)
+              } else {
+                reject(new Error(data.payload.message || 'Gagal memproses token dari Bot'))
+              }
+            }
+          }
+          
+          socket.on('event', handleTokenEvent)
+          
+          setTimeout(() => {
+            socket.off('event', handleTokenEvent)
+            socket.emit('unsubscribe-event', { eventName })
+            reject(new Error('Bot tidak merespons dalam 30 detik (Timeout)'))
+          }, 30000)
+        })
+        
+        setNetflixTokenCache(prev => ({ ...prev, [account.id]: tokenData as any }))
+        return tokenData as any
+      }
+      setNetflixTokenCache(prev => ({ ...prev, [account.id]: response as any }))
+      return response as any
     }
     
     toast.promise(
@@ -1076,14 +1111,51 @@ function RouteComponent() {
   })
 
   const getNetflixTokenMutation = useMutation({
-    mutationFn: (account: Account) => accountService.getNetflixToken(account.id),
-    onSuccess: (data, account) => {
+    mutationFn: async (account: Account) => {
+      toast.loading('Mengambil token Netflix dari Bot... mohon tunggu.', { id: `netflix-token-${account.id}` });
+      const response = await accountService.getNetflixToken(account.id);
+      if (response.status === 'processing') {
+        if (!socket) {
+          throw new Error('Koneksi real-time (socket) terputus, silakan coba lagi');
+        }
+        
+        return new Promise((resolve, reject) => {
+          const eventName = `task:${response.taskId}:done`;
+          socket.emit('subscribe-event', { eventName });
+          
+          const handleTokenEvent = (data: { eventName: string, payload: any }) => {
+            if (data.eventName === eventName) {
+              socket.off('event', handleTokenEvent);
+              socket.emit('unsubscribe-event', { eventName });
+              
+              if (data.payload.status === 'COMPLETED') {
+                resolve(data.payload.payload); // Berisi token, pcLink, dll.
+              } else {
+                reject(new Error(data.payload.message || 'Gagal memproses token dari Bot'));
+              }
+            }
+          };
+          
+          socket.on('event', handleTokenEvent);
+          
+          // Timeout after 30 seconds
+          setTimeout(() => {
+            socket.off('event', handleTokenEvent);
+            socket.emit('unsubscribe-event', { eventName });
+            reject(new Error('Bot tidak merespons dalam 30 detik (Timeout)'));
+          }, 30000);
+        });
+      }
+      return response;
+    },
+    onSuccess: (data: any, account) => {
+      toast.success('Token berhasil didapatkan!', { id: `netflix-token-${account.id}` });
       setNetflixTokenCache(prev => ({ ...prev, [account.id]: data }))
       setNetflixTokenData(data)
       setDialogNetflixTokenOpen(true)
     },
-    onError: (error) => {
-      toast.error(`Gagal mendapatkan token: ${error.message}`)
+    onError: (error, account) => {
+      toast.error(`Gagal mendapatkan token: ${error.message}`, { id: `netflix-token-${account.id}` })
     },
   })
 
@@ -1715,10 +1787,15 @@ function RouteComponent() {
                                     Login TV
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
+                                    disabled={getNetflixTokenMutation.isPending && getNetflixTokenMutation.variables?.id === account.id}
                                     onSelect={() => handleGetNetflixToken(account)}
                                   >
                                     <span>
-                                      <Link2 className={getNetflixTokenMutation.isPending ? 'animate-pulse' : ''} />
+                                      {getNetflixTokenMutation.isPending && getNetflixTokenMutation.variables?.id === account.id ? (
+                                        <Loader2 className="animate-spin" />
+                                      ) : (
+                                        <Link2 />
+                                      )}
                                     </span>
                                     {' '}
                                     Akses Token Login

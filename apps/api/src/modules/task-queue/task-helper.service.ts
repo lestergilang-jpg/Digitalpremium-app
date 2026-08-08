@@ -195,4 +195,22 @@ export class TaskHelperService {
       throw error;
     }
   }
+
+  async netflixGetToken(taskId: string, tenantId: string, payload: { email: string; target_bot?: string }) {
+    try {
+      const clientId = await this.socketGateway.dispatchTask(taskId, tenantId, {
+        module: 'netflix',
+        type: 'getToken',
+        payload,
+      }, payload.target_bot);
+
+      if (!clientId) {
+        throw new Error('No bot available to handle the task');
+      }
+    }
+    catch (error) {
+      this.logger.error(error.message, error.stack, 'TaskProcessorNetflixGetToken');
+      throw error;
+    }
+  }
 }

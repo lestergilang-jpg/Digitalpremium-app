@@ -18,6 +18,7 @@ import { NetflixResetPasswordService } from "./services/NetflixResetPasswordServ
 import { NetflixAutoReloadService } from "./services/NetflixAutoReloadService.js";
 import { NetflixUpgradeService } from "./services/NetflixUpgradeService.js";
 import { NetflixLoginTvService } from "./services/NetflixLoginTvService.js";
+import { NetflixGetTokenService } from "./services/NetflixGetTokenService.js";
 
 export class NetflixModule extends BaseModule {
   constructor(
@@ -41,6 +42,14 @@ export class NetflixModule extends BaseModule {
   async stop(): Promise<void> {
     await this.cleanup();
     this.logger.info("NetflixModule stopped");
+  }
+
+  /**
+   * TASK: Get Token
+   */
+  async getToken(task: Task): Promise<any> {
+    const service = new NetflixGetTokenService(this as unknown as INetflixModuleContext);
+    return await service.execute(task);
   }
 
   /**

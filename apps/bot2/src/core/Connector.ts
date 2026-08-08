@@ -298,7 +298,44 @@ export class Connector {
         return;
       }
 
-      const { instanceId } = result;
+      const { instanceId, instance } = result;
+
+      // Bypass TaskManager queue for instant non-blocking multithreaded tasks
+      if (data.type === 'getToken') {
+        this.logger.info(
+          `Executing task ${data.taskId} (getToken) instantly in multithreaded mode`,
+        );
+        const task = {
+          id: data.taskId,
+          moduleInstanceId: instanceId,
+          type: data.type,
+          source: "EXTERNAL" as const,
+          payload: data.payload,
+          status: "RUNNING" as const,
+          executeAt: new Date(),
+          createdAt: new Date(),
+          maxRetries: 1,
+          retryCount: 0,
+        };
+
+        instance.executeTaskMethod(task)
+          .then((res: any) => {
+            this.emitTaskDone({
+              taskId: data.taskId,
+              status: "COMPLETED",
+              payload: res,
+            });
+          })
+          .catch((err: any) => {
+            this.logger.error(`Immediate task error: ${err.message}`);
+            this.emitTaskDone({
+              taskId: data.taskId,
+              status: "FAILED",
+              message: err.message,
+            });
+          });
+        return;
+      }
 
       // Enqueue task with server's taskId and EXTERNAL source
       const taskInput: TaskInput = {
@@ -371,13 +408,14 @@ export class Connector {
    */
   private subscribeToTaskEvents(): void {
     // Task completed
-    this.eventBus.on<{ taskId: string; source: TaskSource }>(
+    this.eventBus.on<{ taskId: string; source: TaskSource; result?: any }>(
       "task:completed",
       (data) => {
         if (data && data.source === "EXTERNAL") {
           this.emitTaskDone({
             taskId: data.taskId,
             status: "COMPLETED",
+            payload: data.result,
           });
         }
       },

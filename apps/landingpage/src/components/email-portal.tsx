@@ -84,43 +84,34 @@ export function EmailPortal({ token }: EmailPortalProps) {
         }
       }
 
-      const { data } = await api.get(`/public/email-access/${token}/netflix-token`)
-      const nftoken = data?.token;
-      if (!nftoken) return data;
-
-      const pcUrl = `https://www.netflix.com/login?nftoken=${nftoken}`;
-      const mobileUrl = `https://www.netflix.com/unsupported?nftoken=${nftoken}`;
-      const tvUrl = `https://www.netflix.com/tv9?nftoken=${nftoken}`;
-
-      try {
-        const [pcShort, mobileShort, tvShort] = await Promise.all([
-          api.post('/public/short-url', { target_url: pcUrl }),
-          api.post('/public/short-url', { target_url: mobileUrl }),
-          api.post('/public/short-url', { target_url: tvUrl })
-        ]);
-
-        const baseUrl = window.location.origin;
-
-        const result = {
-          token: nftoken,
-          pcLink: `${baseUrl}/l/${pcShort.data.code}`,
-          mobileLink: `${baseUrl}/l/${mobileShort.data.code}`,
-          tvLink: `${baseUrl}/l/${tvShort.data.code}`,
-        };
-
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: result }));
-        return result;
-      } catch (e) {
-        // Fallback to original long urls if shortening fails
-        const result = {
-          token: nftoken,
-          pcLink: pcUrl,
-          mobileLink: mobileUrl,
-          tvLink: tvUrl,
-        };
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: result }));
-        return result;
+      const { data: initData } = await api.get(`/public/email-access/${token}/netflix-token`)
+      
+      let finalResult = initData;
+      if (initData?.status === 'processing') {
+        const taskId = initData.taskId;
+        while (true) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const { data: statusData } = await api.get(`/public/task-status/${taskId}`);
+          if (statusData.status === 'COMPLETED') {
+            finalResult = statusData.result;
+            break;
+          } else if (statusData.status === 'FAILED') {
+            throw new Error(statusData.error_message || 'Gagal memproses token Netflix dari Bot');
+          }
+        }
       }
+
+      const nftoken = finalResult?.token;
+      if (!nftoken) return finalResult;
+
+      const result = {
+        token: nftoken,
+        pcLink: finalResult.pcLink || `https://www.netflix.com/login?nftoken=${nftoken}`,
+        mobileLink: finalResult.mobileLink || `https://www.netflix.com/unsupported?nftoken=${nftoken}`,
+        tvLink: finalResult.tvLink || `https://www.netflix.com/tv9?nftoken=${nftoken}`,
+      };
+      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: result }));
+      return result;
     },
     enabled: !!isNetflix,
     retry: 2,

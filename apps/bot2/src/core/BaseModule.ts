@@ -319,7 +319,7 @@ export abstract class BaseModule {
      * Execute a task method by name
      * TaskManager calls this to run task.type as a method on the module
      */
-    async executeTaskMethod(task: Task): Promise<void> {
+    async executeTaskMethod(task: Task): Promise<any> {
         const methodName = task.type;
         const method = (this as unknown as Record<string, unknown>)[methodName];
 
@@ -327,6 +327,7 @@ export abstract class BaseModule {
             throw new Error(`Method '${methodName}' not found in module '${this.instanceId}'`);
         }
 
-        await (method as (task: Task) => Promise<void>).call(this, task);
+        return await (method as (task: Task) => Promise<any>).call(this, task);
     }
 }
+

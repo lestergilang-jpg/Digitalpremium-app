@@ -49,6 +49,7 @@ import { ShortUrl } from 'src/database/models/short-url.model';
 import { PostgresProvider } from 'src/database/postgres.provider';
 import { TenantProvisioningService } from '../tenant/tenant-provisioning.service';
 import { PromoService } from '../promo/promo.service';
+import { TaskQueueService } from '../task-queue/task-queue.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { SocketGateway } from '../socket/socket.gateway';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -94,6 +95,7 @@ export class PublicService {
     private readonly promoService: PromoService,
     private readonly whatsappService: WhatsappService,
     private readonly socketGateway: SocketGateway,
+    private readonly taskQueueService: TaskQueueService,
     @Inject(SHORT_URL_REPOSITORY)
     private readonly shortUrlRepository: typeof ShortUrl,
   ) {}
@@ -1463,8 +1465,10 @@ export class PublicService {
 
       await transaction.commit();
 
-      const netflixToken = await this.socketGateway.getNetflixTokenFromBot(tenantId, accountEmail);
-      return { token: netflixToken };
+      // Enqueue task — returns taskId immediately, bot processes asynchronously
+      const taskId = await this.taskQueueService.enqueueNetflixGetToken(tenantId, accountEmail);
+
+      return { status: 'processing', taskId };
     } catch (error) {
       try {
         await transaction.rollback();
@@ -1637,5 +1641,23 @@ export class PublicService {
       this.logger.error(`Failed to get short url: ${error.message}`);
       throw new ServiceUnavailableException('Gagal mengambil short url');
     }
+  }
+
+  async checkTaskStatus(taskId: string) {
+    const task = await this.taskQueueService.findOne(taskId);
+    let result = null;
+    if (task.status === 'COMPLETED') {
+      try {
+        result = JSON.parse(task.payload);
+      } catch (e) {
+        // Ignore parsing error
+      }
+    }
+    return {
+      id: task.id,
+      status: task.status,
+      error_message: task.error_message,
+      result,
+    };
   }
 }

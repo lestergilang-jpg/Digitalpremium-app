@@ -119,6 +119,14 @@ export class TaskManager {
         }
 
         this.logger.debug(`Task enqueued: ${id} (${input.type}) for ${input.moduleInstanceId}, source: ${source}, execute_at: ${executeAt}, max_retries: ${maxRetries}`);
+        
+        // Trigger immediate processing for external tasks so they run without delay
+        if (source === 'EXTERNAL') {
+            this.processTasks().catch(err => {
+                this.logger.error(`Immediate task processing error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            });
+        }
+        
         return id;
     }
 
@@ -381,8 +389,8 @@ export class TaskManager {
 
         // Execute task method
         this.doExecuteTask(task, module)
-            .then(() => {
-                this.markTaskCompleted(task.id, task.source);
+            .then((result) => {
+                this.markTaskCompleted(task.id, task.source, result);
                 this.resetErrorCount(task.moduleInstanceId);
             })
             .catch(err => {
@@ -414,7 +422,12 @@ export class TaskManager {
     /**
      * Actually execute the task (with browser context injection)
      */
-    private async doExecuteTask(task: Task, module: BaseModule): Promise<void> {
+    private async doExecuteTask(task: Task, module: BaseModule): Promise<any> {
+        // getToken does not require browser startup, execute directly
+        if (task.type === 'getToken') {
+            return await module.executeTaskMethod(task);
+        }
+
         // Check if module already has a browser context (loop mode)
         let context = module.getBrowserContext();
         let ownContext = false;
@@ -433,7 +446,7 @@ export class TaskManager {
 
         try {
             // Execute the task method
-            await module.executeTaskMethod(task);
+            return await module.executeTaskMethod(task);
         } finally {
             // Cleanup if we created the context
             if (ownContext) {
@@ -464,14 +477,15 @@ export class TaskManager {
     /**
      * Mark task as completed
      */
-    private markTaskCompleted(taskId: string, source: TaskSource): void {
+    private markTaskCompleted(taskId: string, source: TaskSource, result?: any): void {
         this.db.run(
             `UPDATE sys_tasks SET status = 'COMPLETED', completed_at = datetime('now') WHERE id = ?`,
             [taskId]
         );
         this.logger.info(`Task completed: ${taskId}`);
-        this.eventBus.emit('task:completed', { taskId, source });
+        this.eventBus.emit('task:completed', { taskId, source, result });
     }
+
 
     /**
      * Mark task as failed

@@ -3,7 +3,7 @@ import Redis from 'ioredis';
 import { Op, WhereOptions } from 'sequelize';
 import { TASK_QUEUE_REPOSITORY } from 'src/constants/database.const';
 import { REDIS_CLIENT } from 'src/constants/provider.const';
-import { TASK_REFERENCE_KEY, ZSET_KEY } from 'src/constants/scheduler.const';
+import { STREAM_KEY, TASK_REFERENCE_KEY, ZSET_KEY } from 'src/constants/scheduler.const';
 import { TaskQueue } from 'src/database/models/task-queue.model';
 import { PostgresProvider } from 'src/database/postgres.provider';
 import { PaginationProvider } from '../utility/pagination.provider';
@@ -240,6 +240,39 @@ export class TaskQueueService {
       await redisPipeline.exec();
 
       await transaction.commit();
+    }
+    catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  /**
+   * Enqueue a NETFLIX_GET_TOKEN task and return the taskId immediately.
+   * The actual bot work happens asynchronously; the result is pushed via WebSocket event.
+   */
+  async enqueueNetflixGetToken(tenantId: string, email: string, targetBot?: string): Promise<string> {
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema('master', transaction);
+      const taskId = this.snowflakeIdProvider.generateId();
+      await this.taskQueueRepository.create(
+        {
+          id: taskId,
+          tenant_id: tenantId,
+          subject_id: email,
+          context: 'NETFLIX_GET_TOKEN',
+          status: 'DISPATCHED',
+          attempt: 0,
+          execute_at: new Date(),
+          payload: JSON.stringify({ email, target_bot: targetBot }),
+        },
+        { transaction },
+      );
+      // Directly add to Redis stream bypassing ZSET delay
+      await this.redisClient.xadd(STREAM_KEY, '*', 'taskData', `${TASK_REFERENCE_KEY}:${taskId}`);
+      await transaction.commit();
+      return taskId;
     }
     catch (error) {
       await transaction.rollback();
