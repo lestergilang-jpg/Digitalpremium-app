@@ -155,7 +155,10 @@ export abstract class BaseModule {
                 const sessionData = JSON.parse(sessionContent);
                 
                 const cacheKey = `${this.instanceId}:${contextName}`;
-                const cookiesStr = sessionData.cookies ? JSON.stringify(sessionData.cookies) : sessionContent;
+                // Only compare cookie name and value (ignore expires, path, domain which might shift dynamically)
+                const cookiesStr = sessionData.cookies 
+                    ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value }))) 
+                    : sessionContent;
 
                 if (this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
                     return; // Avoid spamming if cookies haven't changed
