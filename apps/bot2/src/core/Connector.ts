@@ -84,10 +84,10 @@ export class Connector {
         reconnectionDelayMax: 30000,
       });
 
-      // Connection events
       this.socket.on("connect", () => {
         this.isConnected = true;
         this.logger.info("Connected to server");
+        this.syncSessionsToDatabase();
         resolve();
       });
 
@@ -209,6 +209,12 @@ export class Connector {
     });
     this.eventBus.on('socket:bot-tv-progress', (data: { taskId: string; accountId: string; message: string }) => {
       this.emitBotTvProgress(data.taskId, data.accountId, data.message);
+    });
+    this.eventBus.on('socket:session-updated', (data: { platform: string; identifier: string; sessionData: any }) => {
+      if (this.socket && this.isConnected) {
+        this.socket.emit('save-account-session', data);
+        this.logger.info(`Emitted save-account-session for ${data.platform}:${data.identifier}`);
+      }
     });
 
     this.logger.debug("Command handlers registered");
@@ -683,6 +689,59 @@ export class Connector {
     } catch (error) {
       this.logger.error(`[Connector] Error importing cookies: ${(error as Error).message}`);
       callback({ error: (error as Error).message });
+    }
+  }
+
+  private async syncSessionsToDatabase(): Promise<void> {
+    try {
+      const cloudDataDir = this.appConfig.app.cloud_data_dir;
+      const sessionDir = cloudDataDir
+        ? path.join(cloudDataDir, "session_data")
+        : path.join(process.cwd(), "session_data");
+
+      if (!fs.existsSync(sessionDir)) {
+        return;
+      }
+
+      const files = fs.readdirSync(sessionDir);
+      const netflixFiles = files.filter(f => f.startsWith('netflix_') && f.endsWith('.json'));
+
+      this.logger.info(`[Connector] Starting startup session sync: found ${netflixFiles.length} Netflix sessions`);
+
+      const batchSize = 100;
+      let currentBatch: Array<{ platform: string; identifier: string; sessionData: any }> = [];
+
+      for (const file of netflixFiles) {
+        const identifier = file.replace(/^netflix_/, '').replace(/\.json$/, '');
+        const filePath = path.join(sessionDir, file);
+        try {
+          const sessionData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          if (sessionData && sessionData.cookies) {
+            currentBatch.push({
+              platform: 'netflix',
+              identifier,
+              sessionData,
+            });
+          }
+
+          if (currentBatch.length >= batchSize) {
+            this.socket?.emit('save-account-sessions-batch', { sessions: currentBatch });
+            currentBatch = [];
+            // Sleep briefly to avoid overloading the socket connection / database
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
+        } catch (e: any) {
+          this.logger.warn(`Failed to sync session file ${file}: ${e.message}`);
+        }
+      }
+
+      if (currentBatch.length > 0) {
+        this.socket?.emit('save-account-sessions-batch', { sessions: currentBatch });
+      }
+
+      this.logger.info(`[Connector] Startup session sync initiated asynchronously.`);
+    } catch (error: any) {
+      this.logger.error(`Error during session sync: ${error.message}`);
     }
   }
 }

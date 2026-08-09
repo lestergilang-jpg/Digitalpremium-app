@@ -3,6 +3,8 @@
  */
 
 import type { BrowserContext } from 'playwright';
+import fs from 'fs';
+import path from 'path';
 import type { Database } from './Database.ts';
 import type { Logger } from './Logger.ts';
 import type { EventBus } from './EventBus.ts';
@@ -144,6 +146,20 @@ export abstract class BaseModule {
         const storagePath = getStorageStatePath(this.instanceId, contextName);
         await saveStorageState(context, storagePath);
         this.logger.debug(`Session '${contextName}' saved`);
+
+        // Emit update to eventBus so Connector can upload to database
+        try {
+            if (fs.existsSync(storagePath)) {
+                const sessionData = JSON.parse(fs.readFileSync(storagePath, 'utf8'));
+                this.eventBus.emit('socket:session-updated', {
+                    platform: this.instanceId,
+                    identifier: contextName,
+                    sessionData,
+                });
+            }
+        } catch (e: any) {
+            this.logger.error(`Failed to read or emit session update: ${e.message}`);
+        }
     }
 
     /**

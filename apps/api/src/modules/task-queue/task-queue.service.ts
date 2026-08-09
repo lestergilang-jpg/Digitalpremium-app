@@ -279,4 +279,39 @@ export class TaskQueueService {
       throw error;
     }
   }
+
+  async enqueueImmediate(
+    tenantId: string,
+    subjectId: string,
+    context: string,
+    payload: any,
+  ): Promise<string> {
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema('master', transaction);
+      const taskId = this.snowflakeIdProvider.generateId();
+      await this.taskQueueRepository.create(
+        {
+          id: taskId,
+          tenant_id: tenantId,
+          subject_id: subjectId,
+          context,
+          status: 'DISPATCHED',
+          attempt: 0,
+          execute_at: new Date(),
+          payload: JSON.stringify(payload),
+        },
+        { transaction },
+      );
+      // Directly add to Redis stream bypassing ZSET delay
+      await this.redisClient.xadd(STREAM_KEY, '*', 'taskData', `${TASK_REFERENCE_KEY}:${taskId}`);
+      await transaction.commit();
+      return taskId;
+    }
+    catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
 }
+

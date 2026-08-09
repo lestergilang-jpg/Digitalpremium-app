@@ -50,6 +50,7 @@ import { WeeklyOffSchedule } from './models/weekly-off-schedule.model';
 import { WithdrawalRequest } from './models/withdrawal-request.model';
 import { Shop } from './models/shop.model';
 import { ShortUrl } from './models/short-url.model';
+import { AccountSession } from './models/account-session.model';
 
 @Injectable()
 export class PostgresProvider {
@@ -132,6 +133,7 @@ export class PostgresProvider {
         ManualBook,
         Shop,
         ShortUrl,
+        AccountSession,
       ]);
     }
     else {

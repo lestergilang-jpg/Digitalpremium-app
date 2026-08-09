@@ -15,7 +15,10 @@ import {
   ACCOUNT_LABEL_REPOSITORY,
   ACCOUNT_USER_MOVE_HISTORY_REPOSITORY,
   SHORT_URL_REPOSITORY,
+  ACCOUNT_SESSION_REPOSITORY,
 } from 'src/constants/database.const';
+import * as crypto from 'node:crypto';
+import { AccountSession } from 'src/database/models/account-session.model';
 import {
   NETFLIX_RESET_PASSWORD,
   NETFLIX_AUTO_RELOAD,
@@ -85,6 +88,8 @@ export class AccountService {
     private readonly logger: AppLoggerService,
     @Inject(SHORT_URL_REPOSITORY)
     private readonly shortUrlRepository: typeof ShortUrl,
+    @Inject(ACCOUNT_SESSION_REPOSITORY)
+    private readonly accountSessionRepository: typeof AccountSession,
   ) {}
 
   async findAll(
@@ -1108,19 +1113,16 @@ export class AccountService {
         target_bot: targetBot,
       };
 
-      const task: UpsertTaskQueueDto = {
-        execute_at: new Date(),
-        subject_id: account.id,
-        context: NETFLIX_RESET_PASSWORD,
-        payload: JSON.stringify(payload),
-        status: 'QUEUED',
-        tenant_id: tenantId,
-      };
-
-      await this.taskQueueService.upsert([task]);
       await transaction.commit();
 
-      return { message: 'Reset password task triggered successfully' };
+      const taskId = await this.taskQueueService.enqueueImmediate(
+        tenantId,
+        account.id,
+        NETFLIX_RESET_PASSWORD,
+        payload
+      );
+
+      return { message: 'Reset password task triggered successfully', taskId };
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -1158,19 +1160,16 @@ export class AccountService {
         target_bot: targetBot,
       };
 
-      const task: UpsertTaskQueueDto = {
-        execute_at: new Date(),
-        subject_id: account.id,
-        context: NETFLIX_AUTO_RELOAD,
-        payload: JSON.stringify(payload),
-        status: 'QUEUED',
-        tenant_id: tenantId,
-      };
-
-      await this.taskQueueService.upsert([task]);
       await transaction.commit();
 
-      return { message: 'Auto reload task triggered successfully' };
+      const taskId = await this.taskQueueService.enqueueImmediate(
+        tenantId,
+        account.id,
+        NETFLIX_AUTO_RELOAD,
+        payload
+      );
+
+      return { message: 'Auto reload task triggered successfully', taskId };
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -1208,19 +1207,16 @@ export class AccountService {
         target_bot: targetBot,
       };
 
-      const task: UpsertTaskQueueDto = {
-        execute_at: new Date(),
-        subject_id: account.id,
-        context: NETFLIX_AUTO_UPGRADE,
-        payload: JSON.stringify(payload),
-        status: 'QUEUED',
-        tenant_id: tenantId,
-      };
-
-      await this.taskQueueService.upsert([task]);
       await transaction.commit();
 
-      return { message: 'Auto upgrade task triggered successfully' };
+      const taskId = await this.taskQueueService.enqueueImmediate(
+        tenantId,
+        account.id,
+        NETFLIX_AUTO_UPGRADE,
+        payload
+      );
+
+      return { message: 'Auto upgrade task triggered successfully', taskId };
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -1257,19 +1253,16 @@ export class AccountService {
         target_bot: targetBot,
       };
 
-      const task: UpsertTaskQueueDto = {
-        execute_at: new Date(Date.now() - 60000), // Prioritas tinggi (1 menit yang lalu)
-        subject_id: account.id,
-        context: NETFLIX_LOGIN_TV,
-        payload: JSON.stringify(payload),
-        status: 'QUEUED',
-        tenant_id: tenantId,
-      };
-
-      await this.taskQueueService.upsert([task]);
       await transaction.commit();
 
-      return { message: 'Login TV task triggered successfully' };
+      const taskId = await this.taskQueueService.enqueueImmediate(
+        tenantId,
+        account.id,
+        NETFLIX_LOGIN_TV,
+        payload
+      );
+
+      return { message: 'Login TV task triggered successfully', taskId };
     } catch (error) {
       await transaction.rollback();
       throw error;
@@ -2107,11 +2100,190 @@ export class AccountService {
       throw error;
     }
 
-    // Enqueue async task — returns taskId immediately without blocking
+    const emailFileName = email.toLowerCase().replace(/[.@]/g, '_');
+    
+    // Check if session exists in the database (Read-only, commit early)
+    let sessionData: any = null;
+    const sessionTx = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema(tenantId, sessionTx);
+      const session = await this.accountSessionRepository.findOne({
+        where: {
+          platform: 'netflix',
+          identifier: emailFileName,
+        },
+        transaction: sessionTx,
+      });
+      if (session) {
+        sessionData = session.session_data;
+      }
+      await sessionTx.commit();
+    } catch (e: any) {
+      await sessionTx.rollback();
+      this.logger.error(`[NetflixTokenDirect] Failed to get session: ${e.message}`, e.stack, 'AccountService');
+    }
+
+    if (sessionData) {
+      const cookies = sessionData.cookies || [];
+      const netflixIdCookie = cookies.find((c: any) => c.name === 'NetflixId');
+      const secureNetflixIdCookie = cookies.find((c: any) => c.name === 'SecureNetflixId');
+      const nfvdidCookie = cookies.find((c: any) => c.name === 'nfvdid');
+
+      if (netflixIdCookie) {
+        const cookieStrings: string[] = [];
+        cookieStrings.push(`NetflixId=${netflixIdCookie.value}`);
+        if (secureNetflixIdCookie) cookieStrings.push(`SecureNetflixId=${secureNetflixIdCookie.value}`);
+        if (nfvdidCookie) cookieStrings.push(`nfvdid=${nfvdidCookie.value}`);
+        const cookieHeader = cookieStrings.join('; ');
+
+        const QUERY_PARAMS: Record<string, string> = {
+          "appVersion": "15.48.1",
+          "config": '{"gamesInTrailersEnabled":"false","isTrailersEvidenceEnabled":"false","cdsMyListSortEnabled":"true","kidsBillboardEnabled":"true","addHorizontalBoxArtToVideoSummariesEnabled":"false","skOverlayTestEnabled":"false","homeFeedTestTVMovieListsEnabled":"false","baselineOnIpadEnabled":"true","trailersVideoIdLoggingFixEnabled":"true","postPlayPreviewsEnabled":"false","bypassContextualAssetsEnabled":"false","roarEnabled":"false","useSeason1AltLabelEnabled":"false","disableCDSSearchPaginationSectionKinds":["searchVideoCarousel"],"cdsSearchHorizontalPaginationEnabled":"true","searchPreQueryGamesEnabled":"true","kidsMyListEnabled":"true","billboardEnabled":"true","useCDSGalleryEnabled":"true","contentWarningEnabled":"true","videosInPopularGamesEnabled":"true","avifFormatEnabled":"false","sharksEnabled":"true"}',
+          "device_type": "NFAPPL-02-",
+          "esn": "NFAPPL-02-IPHONE8=1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200",
+          "idiom": "phone",
+          "iosVersion": "15.8.5",
+          "isTablet": "false",
+          "languages": "en-US",
+          "locale": "en-US",
+          "maxDeviceWidth": "375",
+          "model": "saget",
+          "modelType": "IPHONE8-1",
+          "odpAware": "true",
+          "path": '["account","token","default"]',
+          "pathFormat": "graph",
+          "pixelDensity": "2.0",
+          "progressive": "false",
+          "responseFormat": "json"
+        };
+
+        const urlObj = new URL("https://ios.prod.ftl.netflix.com/iosui/user/15.48");
+        for (const [k, v] of Object.entries(QUERY_PARAMS)) {
+          urlObj.searchParams.set(k, v);
+        }
+
+        const headers = {
+          "User-Agent": "Argo/15.48.1 (iPhone; iOS 15.8.5; Scale/2.00)",
+          "x-netflix.request.attempt": "1",
+          "x-netflix.request.client.user.guid": "A4CS633D7VCBPE2GPK2HL4EKOE",
+          "x-netflix.context.profile-guid": "A4CS633D7VCBPE2GPK2HL4EKOE",
+          "x-netflix.request.routing": '{"path":"/nq/mobile/nqios/~15.48.0/user","control_tag":"iosui_argo"}',
+          "x-netflix.context.app-version": "15.48.1",
+          "x-netflix.argo.translated": "true",
+          "x-netflix.context.form-factor": "phone",
+          "x-netflix.context.sdk-version": "2012.4",
+          "x-netflix.client.appversion": "15.48.1",
+          "x-netflix.context.max-device-width": "375",
+          "x-netflix.context.ab-tests": "",
+          "x-netflix.tracing.cl.useractionid": "4DC655F2-9C3C-4343-8229-CA1B003C3053",
+          "x-netflix.client.type": "argo",
+          "x-netflix.client.ftl.esn": "NFAPPL-02-IPHONE8=1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200",
+          "x-netflix.context.locales": "en-US",
+          "x-netflix.context.top-level-uuid": "90AFE39F-ADF1-4D8A-B33E-528730990FE3",
+          "x-netflix.client.iosversion": "15.8.5",
+          "accept-language": "en-US;q=1",
+          "x-netflix.argo.abtests": "",
+          "x-netflix.context.os-version": "15.8.5",
+          "x-netflix.request.client.context": '{"appState":"foreground"}',
+          "x-netflix.context.ui-flavor": "argo",
+          "x-netflix.argo.nfnsm": "9",
+          "x-netflix.context.pixel-density": "2.0",
+          "x-netflix.request.toplevel.uuid": "90AFE39F-ADF1-4D8A-B33E-528730990FE3",
+          "x-netflix.request.client.timezoneid": "Asia/Dhaka",
+          "Cookie": cookieHeader
+        };
+
+        this.logger.log(`[NetflixTokenDirect] Fetching token directly for ${email} in tenant ${tenantId}`, 'AccountService');
+        
+        try {
+          const fetchResponse = await fetch(urlObj.toString(), {
+            method: "GET",
+            headers: headers
+          });
+
+          if (fetchResponse.ok) {
+            const resJson = await fetchResponse.json() as any;
+            const nftoken = resJson?.value?.account?.token?.default?.token;
+
+            if (nftoken) {
+              const pcUrl = `https://www.netflix.com/login?nftoken=${nftoken}`;
+              const mobileUrl = `https://www.netflix.com/unsupported?nftoken=${nftoken}`;
+              const tvUrl = `https://www.netflix.com/tv9?nftoken=${nftoken}`;
+              const generalUrl = `https://www.netflix.com/account?nftoken=${nftoken}`;
+
+              // Create short urls inside master schema
+              const masterTx = await this.postgresProvider.transaction();
+              try {
+                await this.postgresProvider.setSchema('master', masterTx);
+
+                const generateShort = async (url: string) => {
+                  const code = crypto.randomBytes(4).toString('hex');
+                  const expiresAt = new Date();
+                  expiresAt.setHours(expiresAt.getHours() + 24);
+                  await this.shortUrlRepository.create(
+                    { id: code, target_url: url, expires_at: expiresAt },
+                    { transaction: masterTx }
+                  );
+                  return code;
+                };
+
+                const [pcCode, mobileCode, tvCode, generalCode] = await Promise.all([
+                  generateShort(pcUrl),
+                  generateShort(mobileUrl),
+                  generateShort(tvUrl),
+                  generateShort(generalUrl)
+                ]);
+
+                let landingUrl = process.env.LANDING_URL || 'digitalpremium.id';
+                if (!landingUrl.startsWith('http')) {
+                  landingUrl = `https://${landingUrl}`;
+                }
+                let baseUrl = landingUrl;
+                try {
+                  const url = new URL(landingUrl);
+                  if (!url.hostname.startsWith(`${tenantId}.`)) {
+                    url.hostname = `${tenantId}.${url.hostname}`;
+                  }
+                  baseUrl = url.toString().replace(/\/$/, '');
+                } catch (e) {
+                  const cleanBase = landingUrl.replace('https://', '').replace('http://', '');
+                  baseUrl = `https://${tenantId}.${cleanBase}`;
+                }
+
+                const tenantObj = await (this.postgresProvider as any).sequelize.models.Tenant.findByPk(tenantId, { transaction: masterTx });
+                if (tenantObj && tenantObj.custom_domain) {
+                  baseUrl = `https://${tenantObj.custom_domain.toLowerCase()}`;
+                }
+
+                await masterTx.commit();
+
+                return {
+                  status: 'completed',
+                  token: nftoken,
+                  pcLink: `${baseUrl}/l/${pcCode}`,
+                  mobileLink: `${baseUrl}/l/${mobileCode}`,
+                  tvLink: `${baseUrl}/l/${tvCode}`,
+                  generalLink: `${baseUrl}/l/${generalCode}`
+                };
+              } catch (masterErr: any) {
+                await masterTx.rollback();
+                throw masterErr;
+              }
+            }
+          } else {
+            const errText = await fetchResponse.text();
+            this.logger.error(`[NetflixTokenDirect] FTL API Error for ${email}: ${fetchResponse.status} - ${errText}`, '', 'AccountService');
+          }
+        } catch (fetchErr: any) {
+          this.logger.error(`[NetflixTokenDirect] Fetch failed or master schema error: ${fetchErr.message}`, fetchErr.stack, 'AccountService');
+        }
+      }
+    }
+
+    // Fallback: Enqueue async task — returns taskId immediately without blocking
     const taskId = await this.taskQueueService.enqueueNetflixGetToken(tenantId, email);
     return { status: 'processing', taskId };
   }
-
 
   async importNetflixCookies(tenantId: string, accountId: string, cookies: any) {
     try {
@@ -2123,6 +2295,37 @@ export class AccountService {
       const email = account.email?.email;
       if (!email) {
         throw new Error('Account does not have an email assigned');
+      }
+
+      // Also save to database
+      const emailFileName = email.toLowerCase().replace(/[.@]/g, '_');
+      const transaction = await this.postgresProvider.transaction();
+      try {
+        await this.postgresProvider.setSchema(tenantId, transaction);
+        
+        const existing = await this.accountSessionRepository.findOne({
+          where: {
+            platform: 'netflix',
+            identifier: emailFileName,
+          },
+          transaction,
+        });
+
+        const cookiesToSave = Array.isArray(cookies) ? { cookies } : cookies;
+
+        if (existing) {
+          await existing.update({ session_data: cookiesToSave }, { transaction });
+        } else {
+          await this.accountSessionRepository.create({
+            platform: 'netflix',
+            identifier: emailFileName,
+            session_data: cookiesToSave,
+          }, { transaction });
+        }
+        await transaction.commit();
+      } catch (err: any) {
+        await transaction.rollback();
+        this.logger.error(`Failed to save imported cookies to DB: ${err.message}`, err.stack, 'AccountServiceImportCookies');
       }
 
       await this.socketGateway.importNetflixCookiesToBot(tenantId, email, cookies);

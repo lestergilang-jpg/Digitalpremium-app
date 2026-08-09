@@ -53,7 +53,9 @@ import {
   WEEKLY_OFF_SCHEDULE_REPOSITORY,
   WITHDRAWAL_REQUEST_REPOSITORY,
   PLATFORM_ACCOUNTING_SETTING_REPOSITORY,
+  ACCOUNT_SESSION_REPOSITORY,
 } from 'src/constants/database.const';
+import { AccountSession } from './models/account-session.model';
 import { AccountCapital } from './models/account-capital.model';
 import { AccountLabel } from './models/account-label.model';
 import { AccountProfile } from './models/account-profile.model';
@@ -149,4 +151,5 @@ export const RepositoryProvider: Provider[] = [
   { provide: MANUAL_BOOK_REPOSITORY, useValue: ManualBook },
   { provide: SHORT_URL_REPOSITORY, useValue: ShortUrl },
   { provide: SHOP_REPOSITORY, useValue: Shop },
+  { provide: ACCOUNT_SESSION_REPOSITORY, useValue: AccountSession },
 ];

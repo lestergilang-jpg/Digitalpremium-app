@@ -298,6 +298,108 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     return this.subscribeClientToEvent(client.id, data.eventName);
   }
 
+  @SubscribeMessage('save-account-session')
+  async handleSaveAccountSession(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { platform: string; identifier: string; sessionData: any }
+  ) {
+    const conn = this.connections.get(client.id);
+    if (!conn) {
+      return { success: false, error: 'Unauthorized connection' };
+    }
+
+    const tenantId = conn.tenant_id;
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema(tenantId, transaction);
+
+      const accountSessionRepo = (this.postgresProvider as any).sequelize.models.AccountSession;
+      
+      const existing = await accountSessionRepo.findOne({
+        where: {
+          platform: data.platform,
+          identifier: data.identifier,
+        },
+        transaction,
+      });
+
+      if (existing) {
+        await existing.update({ session_data: data.sessionData }, { transaction });
+      } else {
+        await accountSessionRepo.create({
+          platform: data.platform,
+          identifier: data.identifier,
+          session_data: data.sessionData,
+        }, { transaction });
+      }
+
+      await transaction.commit();
+      this.logger.log(
+        `[SocketGateway] Saved account session for ${data.platform}:${data.identifier} in tenant ${tenantId}`,
+        'SocketGateway'
+      );
+      return { success: true };
+    }
+    catch (e: any) {
+      await transaction.rollback();
+      this.logger.error(
+        `[SocketGateway] Failed to save account session: ${e.message}`,
+        e.stack,
+        'SocketGatewaySaveSession'
+      );
+      return { success: false, error: e.message };
+    }
+  }
+
+  @SubscribeMessage('save-account-sessions-batch')
+  async handleSaveAccountSessionsBatch(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { sessions: Array<{ platform: string; identifier: string; sessionData: any }> }
+  ) {
+    const conn = this.connections.get(client.id);
+    if (!conn) {
+      return { success: false, error: 'Unauthorized connection' };
+    }
+
+    const tenantId = conn.tenant_id;
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema(tenantId, transaction);
+
+      const accountSessionRepo = (this.postgresProvider as any).sequelize.models.AccountSession;
+      
+      await accountSessionRepo.bulkCreate(
+        payload.sessions.map(item => ({
+          platform: item.platform,
+          identifier: item.identifier,
+          session_data: item.sessionData,
+        })),
+        {
+          transaction,
+          updateOnDuplicate: ['session_data', 'updated_at'],
+          conflictAttributes: ['platform', 'identifier'],
+        }
+      );
+
+      await transaction.commit();
+      this.logger.log(
+        `[SocketGateway] Batch saved ${payload.sessions.length} account sessions in tenant ${tenantId}`,
+        'SocketGateway'
+      );
+      return { success: true };
+    }
+    catch (e: any) {
+      await transaction.rollback();
+      this.logger.error(
+        `[SocketGateway] Failed to save batch account sessions: ${e.message}`,
+        e.stack,
+        'SocketGatewaySaveSessionsBatch'
+      );
+      return { success: false, error: e.message };
+    }
+  }
+
+
   @SubscribeMessage('unsubscribe-event')
   async handleEventUnsubscribe(
     @ConnectedSocket() client: Socket,
