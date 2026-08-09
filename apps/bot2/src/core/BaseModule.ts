@@ -36,6 +36,7 @@ export abstract class BaseModule {
     private static readonly DEFAULT_CONTEXT_NAME = 'default';
     protected browserContexts: Map<string, BrowserContext> = new Map();
     private isRunning: boolean = false;
+    private lastSavedSessionHash: Map<string, string> = new Map();
 
     constructor(deps: ModuleDependencies, instanceId: string, config: ModuleConfig) {
         this.db = deps.db;
@@ -150,7 +151,18 @@ export abstract class BaseModule {
         // Emit update to eventBus so Connector can upload to database
         try {
             if (fs.existsSync(storagePath)) {
-                const sessionData = JSON.parse(fs.readFileSync(storagePath, 'utf8'));
+                const sessionContent = fs.readFileSync(storagePath, 'utf8');
+                const sessionData = JSON.parse(sessionContent);
+                
+                const cacheKey = `${this.instanceId}:${contextName}`;
+                const cookiesStr = sessionData.cookies ? JSON.stringify(sessionData.cookies) : sessionContent;
+
+                if (this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
+                    return; // Avoid spamming if cookies haven't changed
+                }
+
+                this.lastSavedSessionHash.set(cacheKey, cookiesStr);
+
                 this.eventBus.emit('socket:session-updated', {
                     platform: this.instanceId,
                     identifier: contextName,
