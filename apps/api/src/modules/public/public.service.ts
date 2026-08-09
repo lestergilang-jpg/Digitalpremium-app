@@ -410,15 +410,8 @@ export class PublicService {
       const dokuResponse = await this.requestDokuCheckout(dokuPayload);
       const paymentUrl = dokuResponse.payment_url;
 
-      // Generate real QRIS string via DOKU SNAP API
-      let qrisString: string;
-      try {
-        qrisString = await this.requestDokuSnapQris(orderId, grossAmount);
-      } catch (qrisErr: any) {
-        this.logger.warn(`[CreatePayment] SNAP QRIS failed, falling back to payment_url: ${qrisErr.message}`);
-        // Fallback: return payment_url so frontend can redirect to DOKU Checkout
-        qrisString = '';
-      }
+      // Skip SNAP QRIS request and use payment_url directly as requested by the user
+      const qrisString = '';
 
       // 4. Create transaction record
       const txn = await this.transactionRepository.create(
