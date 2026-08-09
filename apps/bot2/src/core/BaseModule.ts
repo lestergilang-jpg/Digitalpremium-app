@@ -149,6 +149,10 @@ export abstract class BaseModule {
         this.logger.debug(`Session '${contextName}' saved`);
 
         // Emit update to eventBus so Connector can upload to database
+        if (this.instanceId !== 'netflix') {
+            return;
+        }
+
         try {
             if (fs.existsSync(storagePath)) {
                 const sessionContent = fs.readFileSync(storagePath, 'utf8');
