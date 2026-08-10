@@ -7,6 +7,7 @@ import {
   Inject,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { TENANT_REPOSITORY } from 'src/constants/database.const';
 import { Tenant } from 'src/database/models/tenant.model';
@@ -282,6 +283,22 @@ export class PublicController {
     const xForwardedHost = headers['x-forwarded-host'];
     const tenantId = await this.getTenantId(host, xTenantId, xForwardedHost);
     return this.publicService.getArticleBySlug(tenantId, slug);
+  }
+
+  @Get('purchases')
+  async getPurchases(
+    @Headers() headers: any,
+    @Query('identifier') identifier: string,
+  ) {
+    if (!identifier) {
+      throw new BadRequestException('Email atau nomor WhatsApp wajib diisi');
+    }
+    const host = headers.host || '';
+    const xTenantId = headers['x-tenant-id'];
+    const xForwardedHost = headers['x-forwarded-host'];
+    const tenantId = await this.getTenantId(host, xTenantId, xForwardedHost);
+    
+    return this.publicService.getPurchasesByIdentifier(tenantId, identifier);
   }
 
   @Post('tenant/register')

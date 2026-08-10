@@ -784,7 +784,7 @@ function RouteComponent() {
                             <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full mt-1 ${
                               v.status === 'USED' 
                                 ? 'bg-red-500/10 text-red-500' 
-                                : v.status === 'EXPIRED' 
+                                : v.status === 'EXPIRED' || v.status === 'CLAIMED EXPIRED'
                                 ? 'bg-slate-500/10 text-slate-500'
                                 : v.status === 'PENDING'
                                 ? 'bg-yellow-500/10 text-yellow-500'
@@ -819,7 +819,7 @@ function RouteComponent() {
                           <div className="space-y-1">
                             <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Status Voucher</p>
                             <p className={`text-lg font-black ${
-                              v.status === 'USED' ? 'text-red-500' : v.status === 'PENDING' ? 'text-yellow-500' : 'text-green-500'
+                              v.status === 'USED' ? 'text-red-500' : v.status === 'CLAIMED EXPIRED' || v.status === 'EXPIRED' ? 'text-slate-500' : v.status === 'PENDING' ? 'text-yellow-500' : 'text-green-500'
                             }`}>{v.status}</p>
                           </div>
                           <div className="text-right space-y-1">
@@ -844,7 +844,7 @@ function RouteComponent() {
                             </div>
                             <p className="text-sm font-medium">{formatDate(v.expired_at)}</p>
                           </div>
-                          {v.status === 'USED' && (
+                          {(v.status === 'USED' || v.status === 'CLAIMED EXPIRED') && (
                             <div className="space-y-1">
                               <div className="flex items-center gap-1.5 text-muted-foreground">
                                 <Check className="size-3" />
@@ -925,7 +925,7 @@ function RouteComponent() {
                         </div>
 
                         {/* Account Allocation Info (If USED) */}
-                        {v.status === 'USED' && v.transaction_item?.user && (
+                        {(v.status === 'USED' || v.status === 'CLAIMED EXPIRED') && v.transaction_item?.user && (
                           <>
                             <Separator />
                             <div className="space-y-3">

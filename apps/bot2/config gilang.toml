@@ -1,0 +1,22 @@
+[app]
+name = "PC Gilang"
+max_concurrent_tasks = 6
+task_timeout_ms = 300000
+api_base_url = "api.digitalpremium.id"
+headless=false
+# Sinkronisasi sesi via Google Drive Desktop (G:)
+cloud_data_dir = "G:\\My Drive\\VolveBotData"
+
+[api]
+email = "paytronikpremium@gmail.com"
+password = "@Aezakmi123"
+
+[connector]
+enabled = true
+
+[logger]
+level = "info"
+
+[[modules]]
+module = "netflix"
+name = "netflix"

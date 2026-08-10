@@ -946,7 +946,9 @@ export class PublicService {
 
       // Ekstrak data akun agar Frontend bisa langsung baca
       const user = (voucher.transaction_item as any)?.user;
-      const accountData = user ? {
+      const isExpired = user && user.expired_at && new Date() > new Date(user.expired_at);
+      
+      const accountData = (user && !isExpired) ? {
         email: user.account?.email?.email,
         password: user.account?.account_password,
         profile_name: user.profile?.name,
@@ -963,7 +965,8 @@ export class PublicService {
       await transaction.commit();
       return { 
         voucher, 
-        account: accountData 
+        account: accountData,
+        is_expired: isExpired
       };
     }
     catch (error) {
@@ -1360,6 +1363,11 @@ export class PublicService {
       const user = (voucher.transaction_item as any)?.user;
       if (!user) throw new NotFoundException('Data user tidak ditemukan');
 
+      // Check Expiration
+      if (user.expired_at && new Date() > new Date(user.expired_at)) {
+        throw new BadRequestException('Masa langganan Anda untuk voucher ini telah berakhir');
+      }
+
       // 2. Security Check (Duration-based)
       // Max 10 minutes session for the tutorial link
       
@@ -1453,6 +1461,11 @@ export class PublicService {
 
       const user = (voucher.transaction_item as any)?.user;
       if (!user) throw new NotFoundException('Data user tidak ditemukan');
+
+      // Check Expiration
+      if (user.expired_at && new Date() > new Date(user.expired_at)) {
+        throw new BadRequestException('Masa langganan Anda untuk voucher ini telah berakhir');
+      }
 
       accountEmail = user.account?.email?.email;
       if (!accountEmail) throw new NotFoundException('Email akun tidak ditemukan');
@@ -1814,6 +1827,114 @@ export class PublicService {
       if (error instanceof NotFoundException) throw error;
       this.logger.error(`Failed to get short url: ${error.message}`);
       throw new ServiceUnavailableException('Gagal mengambil short url');
+    }
+  }
+
+  async getPurchasesByIdentifier(tenantId: string, identifier: string) {
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema(tenantId, transaction);
+
+      // Normalisasi WhatsApp/No HP
+      let cleanIdentifier = identifier.trim();
+      const searchConditions: any[] = [
+        { buyer_email: cleanIdentifier }
+      ];
+
+      // Jika input hanya angka, deteksi sebagai nomor HP dan tambahkan variasi prefix
+      if (/^\+?\d+$/.test(cleanIdentifier)) {
+        const digits = cleanIdentifier.replace(/\D/g, '');
+        searchConditions.push({ buyer_whatsapp: digits });
+        
+        if (digits.startsWith('0')) {
+          searchConditions.push({ buyer_whatsapp: '62' + digits.substring(1) });
+        } else if (digits.startsWith('62')) {
+          searchConditions.push({ buyer_whatsapp: '0' + digits.substring(2) });
+        }
+      } else {
+        searchConditions.push({ buyer_whatsapp: cleanIdentifier });
+      }
+
+      // Ambil daftar voucher yang lunas (PAID) atau sudah digunakan (USED)
+      const vouchers = await this.voucherRepository.findAll({
+        where: {
+          [Op.or]: searchConditions,
+          payment_status: 'PAID'
+        },
+        include: [
+          {
+            model: ProductVariant,
+            as: 'product_variant',
+            include: [
+              { model: Product, as: 'product' },
+              { model: Tutorial, as: 'tutorial' }
+            ],
+          },
+          {
+            model: TransactionItem,
+            as: 'transaction_item',
+            include: [
+              {
+                model: AccountUser,
+                as: 'user',
+                include: [
+                  {
+                    model: Account,
+                    as: 'account',
+                    include: [{ model: Email, as: 'email' }],
+                  },
+                  {
+                    model: AccountProfile,
+                    as: 'profile',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        order: [['created_at', 'DESC']],
+        transaction,
+      });
+
+      // Format response agar Frontend mudah mengonsumsi data akun langsung
+      const results = vouchers.map(v => {
+        const user = (v.transaction_item as any)?.user;
+        const isExpired = user && user.expired_at && new Date() > new Date(user.expired_at);
+        const accountData = (user && !isExpired) ? {
+          email: user.account?.email?.email,
+          password: user.account?.account_password,
+          profile_name: user.profile?.name,
+          expired_at: user.expired_at,
+          metadata: (() => {
+            try {
+              return user.profile?.metadata ? JSON.parse(user.profile.metadata) : {};
+            } catch (e) {
+              return {};
+            }
+          })(),
+        } : null;
+
+        return {
+          id: v.id,
+          status: v.status,
+          payment_status: v.payment_status,
+          buyer_name: v.buyer_name,
+          buyer_email: v.buyer_email,
+          buyer_whatsapp: v.buyer_whatsapp,
+          created_at: v.getDataValue('created_at'),
+          expired_at: v.expired_at,
+          access_token: v.access_token,
+          product_variant: v.product_variant,
+          account: accountData,
+          is_expired: isExpired
+        };
+      });
+
+      await transaction.commit();
+      return results;
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
     }
   }
 

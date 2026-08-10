@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, ShoppingBag, Home, Package, Key, Crown, BookOpen, FileText, Bell } from 'lucide-react'
+import { Menu, X, ShoppingBag, Home, Package, Key, Crown, BookOpen, FileText, Bell, Clock } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useTenant } from '@/hooks/use-tenant'
@@ -92,6 +92,7 @@ export function Navbar({ config: initialConfig }: NavbarProps) {
     { name: 'TUTORIAL', href: '/tutorial', icon: BookOpen },
     { name: 'BLOG', href: '/blog', icon: FileText },
     { name: 'REDEEM', href: '/redeem', icon: Key },
+    { name: 'RIWAYAT', href: '/history', icon: Clock },
   ]
 
   const brandName = config?.logoText || (tenantId ? tenantId.toUpperCase() : '')

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Copy, Check, ExternalLink, Loader2, Sparkles, Key, BookOpen, Mail, User, Clock, Hash } from 'lucide-react'
+import { Search, Copy, Check, ExternalLink, Loader2, Sparkles, Key, BookOpen, Mail, User, Clock, Hash, AlertCircle } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -150,6 +150,11 @@ export default function RedeemPage() {
                           ? 'Kadaluarsa'
                           : 'Siap Digunakan'}
                       </span>
+                      {result.is_expired && (
+                        <span className="px-4 py-1.5 rounded-full text-[10px] font-black tracking-[0.2em] uppercase bg-destructive/10 text-destructive border border-destructive/20">
+                          Masa Langganan Habis
+                        </span>
+                      )}
                     </div>
                   </div>
                   
@@ -164,7 +169,7 @@ export default function RedeemPage() {
                   )}
                 </div>
 
-                {result.account && (() => {
+                {result.account ? (() => {
                   const displayConfig = result.voucher.product_variant?.redeem_display_config;
                   const showEmail = displayConfig?.show_email ?? true;
                   const showPassword = displayConfig?.show_password ?? true;
@@ -333,7 +338,19 @@ export default function RedeemPage() {
                       )}
                     </div>
                   );
-                })()}
+                })() : result.voucher.status === 'USED' && (
+                  <div className="text-center py-6 border-t border-border mt-8 pt-8">
+                    <AlertCircle className={cn("size-10 mx-auto mb-3", result.is_expired ? "text-destructive" : "text-amber-500")} />
+                    <p className="text-foreground font-bold text-sm">
+                      {result.is_expired ? 'Masa Langganan Habis' : 'Detail Akun Belum Siap'}
+                    </p>
+                    <p className="text-slate-400 text-xs mt-1 max-w-md mx-auto">
+                      {result.is_expired 
+                        ? 'Masa aktif/durasi langganan akun Anda telah berakhir. Kredensial dan akses akun disembunyikan demi keamanan. Silakan lakukan pembelian baru untuk melanjutkan.'
+                        : 'Akun sedang diproses atau voucher belum diredeem. Silakan hubungi admin jika transaksi Anda bermasalah.'}
+                    </p>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

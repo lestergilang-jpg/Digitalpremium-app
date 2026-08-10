@@ -243,8 +243,19 @@ export class VoucherService {
         transaction,
       });
 
+      const formattedItems = items.map(v => {
+        const user = (v.transaction_item as any)?.user;
+        const isExpired = user && user.expired_at && new Date() > new Date(user.expired_at);
+        
+        const plainVoucher = v.toJSON() as any;
+        if (plainVoucher.status === 'USED' && isExpired) {
+          plainVoucher.status = 'CLAIMED EXPIRED';
+        }
+        return plainVoucher;
+      });
+
       await transaction.commit();
-      return { items, total };
+      return { items: formattedItems, total };
     }
     catch (error) {
       await transaction.rollback();
