@@ -39,6 +39,7 @@ export class Connector {
 
   private socket: Socket | null = null;
   private isConnected: boolean = false;
+  private hasSyncedSessions: boolean = false;
 
   constructor(
     config: AppConfig,
@@ -87,7 +88,10 @@ export class Connector {
       this.socket.on("connect", () => {
         this.isConnected = true;
         this.logger.info("Connected to server");
-        this.syncSessionsToDatabase();
+        if (!this.hasSyncedSessions) {
+          this.hasSyncedSessions = true;
+          this.syncSessionsToDatabase();
+        }
         resolve();
       });
 
@@ -708,7 +712,7 @@ export class Connector {
 
       this.logger.info(`[Connector] Starting startup session sync: found ${netflixFiles.length} Netflix sessions`);
 
-      const batchSize = 100;
+      const batchSize = 20;
       let currentBatch: Array<{ platform: string; identifier: string; sessionData: any }> = [];
 
       for (const file of netflixFiles) {

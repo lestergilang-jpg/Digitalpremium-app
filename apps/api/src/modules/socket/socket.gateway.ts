@@ -17,6 +17,7 @@ import { SocketAuthContext, SocketConnection, SocketConnectionType } from './typ
 
 @WebSocketGateway({
   cors: { origin: '*' },
+  maxHttpBufferSize: 1e7, // 10MB
 })
 export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   private connections: Map<string, SocketConnection> = new Map();
