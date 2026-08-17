@@ -519,7 +519,10 @@ export class Connector {
         return callback({ error: "NetflixId cookie not found in session." });
       }
 
-      callback({ cookie: netflixIdCookie.value });
+      callback({ 
+        cookie: netflixIdCookie.value,
+        cookies: sessionData.cookies 
+      });
     } catch (error) {
       this.logger.error(`[Connector] Error fetching cookies: ${(error as Error).message}`);
       callback({ error: (error as Error).message });
