@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Query,
+  Ip,
 } from '@nestjs/common';
 import { TENANT_REPOSITORY } from 'src/constants/database.const';
 import { Tenant } from 'src/database/models/tenant.model';
@@ -251,8 +252,12 @@ export class PublicController {
   @Post('convert-netflix-cookies')
   async convertNetflixCookies(
     @Body('cookies') cookies: any,
+    @Headers('x-forwarded-for') xForwardedFor: string,
+    @Headers('x-real-ip') xRealIp: string,
+    @Ip() ip: string,
   ) {
-    return this.publicService.convertNetflixCookies(cookies);
+    const clientIp = xForwardedFor?.split(',')[0].trim() || xRealIp || ip || 'unknown';
+    return this.publicService.convertNetflixCookies(cookies, clientIp);
   }
 
 

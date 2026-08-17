@@ -59,6 +59,7 @@ import { RedeemVoucherDto } from './dto/redeem-voucher.dto';
 @Injectable()
 export class PublicService {
   private readonly logger = new Logger('PublicService');
+  private readonly conversionRateLimitMap = new Map<string, { date: string; count: number }>();
 
   constructor(
     private readonly postgresProvider: PostgresProvider,
@@ -1489,7 +1490,28 @@ export class PublicService {
     }
   }
 
-  async convertNetflixCookies(cookiesInput: any) {
+  async convertNetflixCookies(cookiesInput: any, clientIp: string) {
+    // 1. Rate Limiting Check (Max 3 conversions per IP per calendar day)
+    const todayStr = new Date().toISOString().split('T')[0]; // e.g. "2026-08-17"
+    
+    // Clean up old entries periodically to prevent memory leak
+    if (this.conversionRateLimitMap.size > 1000) {
+      for (const [ipKey, record] of this.conversionRateLimitMap.entries()) {
+        if (record.date !== todayStr) {
+          this.conversionRateLimitMap.delete(ipKey);
+        }
+      }
+    }
+
+    const userRecord = this.conversionRateLimitMap.get(clientIp);
+    if (userRecord && userRecord.date === todayStr) {
+      if (userRecord.count >= 3) {
+        throw new BadRequestException(
+          'Batas konversi harian gratis telah tercapai (maksimal 3 kali sehari). Silakan daftar atau masuk ke dashboard untuk konversi tanpa batas!'
+        );
+      }
+    }
+
     let cookiesList: any[] = [];
 
     if (typeof cookiesInput === 'string') {
@@ -1653,6 +1675,10 @@ export class PublicService {
             ]);
 
             await masterTx.commit();
+
+            // Increment rate limit count
+            const currentCount = userRecord && userRecord.date === todayStr ? userRecord.count : 0;
+            this.conversionRateLimitMap.set(clientIp, { date: todayStr, count: currentCount + 1 });
 
             let landingUrl = process.env.LANDING_URL || 'digitalpremium.id';
             if (!landingUrl.startsWith('http')) {
