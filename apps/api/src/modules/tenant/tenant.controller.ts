@@ -97,6 +97,20 @@ export class TenantController {
     return await this.tenantService.revokeAnyDeviceSession(tenantId, sessionId);
   }
 
+  @UseGuards(VcAuthGuard)
+  @Get('owner/billing-status')
+  async getBillingStatus(@Request() req: any) {
+    const tenantId = req.user?.tenant_id;
+    return await this.tenantService.getBillingStatus(tenantId);
+  }
+
+  @UseGuards(VcAuthGuard)
+  @Post('owner/renew-subscription')
+  async renewSubscription(@Request() req: any) {
+    const tenantId = req.user?.tenant_id;
+    return await this.tenantService.renewSubscription(tenantId);
+  }
+
   @PublicRoute()
   @Post('login')
   login(@Body() loginDto: LoginDto, @Request() req: any) {

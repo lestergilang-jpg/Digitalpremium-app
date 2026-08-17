@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  HttpException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -119,6 +120,25 @@ export class VcAuthGuard implements CanActivate {
 
       if (!tenant) {
         throw new UnauthorizedException('Invalid tenant');
+      }
+
+      const now = new Date();
+      const isTrialActive = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) > now : false;
+      const isSubscriptionActive = tenant.subscription_ends_at ? new Date(tenant.subscription_ends_at) > now : false;
+      const isExpired = !isTrialActive && !isSubscriptionActive;
+
+      if (isExpired) {
+        const isBillingRoute = req.url.includes('/billing-status') || req.url.includes('/renew-subscription');
+        if (!isBillingRoute) {
+          throw new HttpException(
+            {
+              statusCode: 402,
+              message: 'Masa aktif tenant telah habis. Silakan lakukan pembayaran untuk memperpanjang layanan.',
+              error: 'Payment Required',
+            },
+            402
+          );
+        }
       }
     }
 

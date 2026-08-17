@@ -13,12 +13,17 @@ export interface TenantAttributes {
   name: string | null;
   status: 'active' | 'pending' | 'suspended';
   custom_domain: string | null;
+  trial_ends_at: Date | null;
+  subscription_ends_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
 
 interface TenantCreationAttributes
-  extends Optional<TenantAttributes, 'created_at' | 'updated_at' | 'status' | 'name'> {}
+  extends Optional<
+    TenantAttributes,
+    'created_at' | 'updated_at' | 'status' | 'name' | 'trial_ends_at' | 'subscription_ends_at'
+  > {}
 
 @Table({ tableName: 'tenant' })
 export class Tenant extends Model<TenantAttributes, TenantCreationAttributes> {
@@ -44,4 +49,12 @@ export class Tenant extends Model<TenantAttributes, TenantCreationAttributes> {
     unique: true,
   })
   declare custom_domain: string | null;
+
+  @AllowNull(true)
+  @Column(DataType.DATE)
+  declare trial_ends_at: Date | null;
+
+  @AllowNull(true)
+  @Column(DataType.DATE)
+  declare subscription_ends_at: Date | null;
 }

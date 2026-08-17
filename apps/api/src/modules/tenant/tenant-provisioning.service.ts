@@ -48,10 +48,15 @@ export class TenantProvisioningService {
       // 1. Create Tenant Record in Master
       await this.postgresProvider.setSchema('master', transaction);
 
+      const trialEndsAt = new Date();
+      trialEndsAt.setDate(trialEndsAt.getDate() + 30);
+
       const tenant = await this.tenantRepository.create({
         id: schema,
         name: name || username,
         status: 'active', // Set to active for now, change to pending if verification is implemented
+        trial_ends_at: trialEndsAt,
+        subscription_ends_at: null,
       }, { transaction });
 
       // Hash password (simple sha256 for now, can be improved)

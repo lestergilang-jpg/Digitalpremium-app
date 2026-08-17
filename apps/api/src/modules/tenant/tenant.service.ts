@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import * as https from 'node:https';
 import {
   BadRequestException,
   Inject,
@@ -385,5 +386,118 @@ export class TenantService {
       await transaction.rollback();
       throw error;
     }
+  }
+
+  async getBillingStatus(tenantId: string) {
+    const tenant = await this.findOne(tenantId);
+    const now = new Date();
+    const isTrialActive = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) > now : false;
+    const isSubscriptionActive = tenant.subscription_ends_at ? new Date(tenant.subscription_ends_at) > now : false;
+    return {
+      trial_ends_at: tenant.trial_ends_at,
+      subscription_ends_at: tenant.subscription_ends_at,
+      is_expired: !isTrialActive && !isSubscriptionActive,
+    };
+  }
+
+  async renewSubscription(tenantId: string) {
+    const tenant = await this.findOne(tenantId);
+    const orderId = `SUB-${tenantId}-${Date.now()}`;
+    const amount = 150000; // IDR 150,000 for perpanjangan
+
+    const dashboardUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    const callbackUrl = `${dashboardUrl}/billing?order_id=${orderId}`;
+
+    const dokuPayload = {
+      order: {
+        invoice_number: orderId,
+        amount: amount,
+        currency: 'IDR',
+        callback_url: callbackUrl,
+        auto_redirect: true,
+      },
+      customer: {
+        name: tenant.name || tenantId,
+        email: `${tenantId}@digitalpremium.id`, // fallback email
+      },
+    };
+
+    const dokuResponse = await this.requestDokuCheckout(dokuPayload);
+    return {
+      payment_url: dokuResponse.payment_url,
+      order_id: orderId,
+      amount,
+    };
+  }
+
+  private async requestDokuCheckout(payload: any): Promise<{ payment_url: string }> {
+    const clientId = this.configService.get<string>('doku.clientId');
+    const secretKey = this.configService.get<string>('doku.secretKey') || '';
+    const isProd = this.configService.get<boolean>('doku.isProduction');
+    
+    const baseUrl = isProd ? 'api.doku.com' : 'api-sandbox.doku.com';
+    const targetPath = '/checkout/v1/payment';
+    const requestId = `REQ-${Date.now()}`;
+    const timestamp = new Date().toISOString().split('.')[0] + 'Z';
+
+    const fullPayload = {
+      ...payload,
+      payment: {
+        payment_due_date: 60,
+        payment_method_types: ['QRIS'],
+      },
+    };
+    
+    const body = JSON.stringify(fullPayload);
+
+    const digest = crypto.createHash('sha256').update(body).digest('base64');
+    const signatureComponent = `Client-Id:${clientId}\n` +
+                               `Request-Id:${requestId}\n` +
+                               `Request-Timestamp:${timestamp}\n` +
+                               `Request-Target:${targetPath}\n` +
+                               `Digest:${digest}`;
+
+    const signature = crypto
+      .createHmac('sha256', secretKey)
+      .update(signatureComponent)
+      .digest('base64');
+
+    const options = {
+      hostname: baseUrl,
+      path: targetPath,
+      method: 'POST',
+      headers: {
+        'Client-Id': clientId,
+        'Request-Id': requestId,
+        'Request-Timestamp': timestamp,
+        'Signature': `HMACSHA256=${signature}`,
+        'Content-Type': 'application/json',
+      },
+    };
+
+    return new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = '';
+        res.on('data', (chunk) => {
+          responseBody += chunk;
+        });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(responseBody);
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300 && parsed.response?.payment?.url) {
+              resolve({ payment_url: parsed.response.payment.url });
+            } else {
+              reject(new Error(`DOKU Error (${res.statusCode || 'unknown'}): ${responseBody}`));
+            }
+          } catch (e) {
+            reject(new Error(`Failed to parse DOKU response: ${responseBody}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
   }
 }
