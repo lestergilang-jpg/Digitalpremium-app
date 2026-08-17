@@ -125,7 +125,8 @@ export class VcAuthGuard implements CanActivate {
       const now = new Date();
       const isTrialActive = tenant.trial_ends_at ? new Date(tenant.trial_ends_at) > now : false;
       const isSubscriptionActive = tenant.subscription_ends_at ? new Date(tenant.subscription_ends_at) > now : false;
-      const isExpired = !isTrialActive && !isSubscriptionActive;
+      const isPaytronikBypass = tenant.id === 'paytronik';
+      const isExpired = !isTrialActive && !isSubscriptionActive && !isPaytronikBypass;
 
       if (isExpired) {
         const isBillingRoute = req.url.includes('/billing-status') || req.url.includes('/renew-subscription');

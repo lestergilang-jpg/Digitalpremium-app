@@ -396,7 +396,7 @@ export class TenantService {
     return {
       trial_ends_at: tenant.trial_ends_at,
       subscription_ends_at: tenant.subscription_ends_at,
-      is_expired: !isTrialActive && !isSubscriptionActive,
+      is_expired: tenant.id === 'paytronik' ? false : (!isTrialActive && !isSubscriptionActive),
     };
   }
 
