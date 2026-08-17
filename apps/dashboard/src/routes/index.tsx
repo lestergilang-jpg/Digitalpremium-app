@@ -14,7 +14,8 @@ import {
   Smartphone,
   Laptop,
   Link2,
-  Copy
+  Copy,
+  AlertTriangle
 } from 'lucide-react'
 import { useScrollReveal } from '@/dashboard/hooks/use-scroll-reveal'
 import { toast } from 'sonner'
@@ -36,6 +37,7 @@ function App() {
   // NFtoken Converter States
   const [cookiesInput, setCookiesInput] = useState('')
   const [isConverting, setIsConverting] = useState(false)
+  const [conversionLimitMessage, setConversionLimitMessage] = useState<string | null>(null)
   const [conversionResult, setConversionResult] = useState<{
     pcLink: string;
     mobileLink: string;
@@ -50,6 +52,8 @@ function App() {
     }
 
     setIsConverting(true)
+    setConversionLimitMessage(null)
+    setConversionResult(null)
     try {
       const response = await fetch(`${API_URL}/public/convert-netflix-cookies`, {
         method: 'POST',
@@ -61,6 +65,10 @@ function App() {
 
       const data = await response.json()
       if (!response.ok) {
+        if (data.message && data.message.includes('Batas konversi harian')) {
+          setConversionLimitMessage(data.message)
+          return
+        }
         throw new Error(data.message || 'Gagal mengonversi cookie')
       }
 
@@ -283,6 +291,29 @@ function App() {
                   </>
                 )}
               </button>
+
+              {/* Conversion Limit Error Message */}
+              {conversionLimitMessage && (
+                <div className="pt-6 border-t border-border space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                  <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-4.5 flex flex-col gap-3">
+                    <div className="flex gap-2.5 items-start">
+                      <AlertTriangle className="size-5 text-destructive shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <h4 className="font-bold text-sm text-foreground">Batas Konversi Tercapai</h4>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {conversionLimitMessage}
+                        </p>
+                      </div>
+                    </div>
+                    <Link
+                      to="/register"
+                      className="w-full h-10 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-lg flex items-center justify-center text-xs shadow-sm shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                    >
+                      Daftar Sekarang & Dapatkan Akses Tanpa Batas
+                    </Link>
+                  </div>
+                </div>
+              )}
 
               {/* Conversion Output Results */}
               {conversionResult && (
