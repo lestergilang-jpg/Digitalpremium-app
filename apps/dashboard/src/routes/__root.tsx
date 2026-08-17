@@ -17,7 +17,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       <GlobalAlertDialogProvider>
         <Outlet />
       </GlobalAlertDialogProvider>
-      <Toaster richColors position="top-center" />
+      <Toaster richColors position="top-center" expand={true} />
     </>
   ),
   errorComponent: ({ error }: any) => (
