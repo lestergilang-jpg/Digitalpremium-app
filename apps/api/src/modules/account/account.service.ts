@@ -2336,6 +2336,11 @@ export class AccountService {
     }
   }
 
+  async syncCookiesFromBot(tenantId: string, email: string, botName: string, accountId: string) {
+    const cookies = await this.socketGateway.getNetflixCookiesFromSpecificBot(tenantId, email, botName);
+    return this.importNetflixCookies(tenantId, accountId, cookies);
+  }
+
   async getMoveHistoryByProduct(tenantId: string, productId: string) {
     const transaction = await this.postgresProvider.transaction();
     try {

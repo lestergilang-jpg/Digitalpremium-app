@@ -477,6 +477,34 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     });
   }
 
+  async getNetflixCookiesFromSpecificBot(
+    tenantId: string,
+    email: string,
+    botName: string,
+  ): Promise<any> {
+    const targetBot = Array.from(this.connections.values()).find(
+      c => c.tenant_id === tenantId && c.type === 'BOT' && c.name === botName,
+    );
+
+    if (!targetBot) {
+      throw new Error(`Bot '${botName}' tidak aktif (offline) atau tidak ditemukan.`);
+    }
+
+    return new Promise((resolve, reject) => {
+      targetBot.socket.timeout(10000).emit('get_netflix_cookies', { email }, (err: any, response: any) => {
+        if (err) {
+          reject(new Error('Bot tidak merespons dalam 10 detik (Timeout).'));
+        } else if (response && response.error) {
+          reject(new Error(response.error));
+        } else if (response && response.cookies) {
+          resolve(response.cookies);
+        } else {
+          reject(new Error('Respon tidak valid dari bot.'));
+        }
+      });
+    });
+  }
+
   async dispatchTask(
     taskId: string,
     tenantId: string,

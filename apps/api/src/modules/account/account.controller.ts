@@ -94,6 +94,17 @@ export class AccountController {
     return this.accountService.importNetflixCookies(request.tenant_id!, id, cookies);
   }
 
+  @Post(':id/sync-cookies-from-bot')
+  @RequirePermissions('account.view')
+  syncCookiesFromBot(
+    @Param('id') id: string,
+    @Body('email') email: string,
+    @Body('botName') botName: string,
+    @Request() request: AppRequest,
+  ) {
+    return this.accountService.syncCookiesFromBot(request.tenant_id!, email, botName, id);
+  }
+
   @Post()
   @RequirePermissions('account.create')
   create(

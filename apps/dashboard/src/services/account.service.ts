@@ -961,5 +961,22 @@ export function AccountServiceGenerator(apiUrl: string, accessToken: string, ten
       if (!response.ok) throw new Error(data.message || 'Gagal mengimpor cookie')
       return data
     },
+    syncCookiesFromBot: async (accountId: string, email: string, botName: string): Promise<{ success: boolean; message: string }> => {
+      const response = await generateApiFetch(
+        apiUrl,
+        accessToken,
+        tenantId,
+        `/account/${accountId}/sync-cookies-from-bot`,
+        undefined,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, botName }),
+        },
+      )
+      const data = await parseApiResponse(response)
+      if (!response.ok) throw new Error(data.message || 'Gagal menyinkronkan cookie')
+      return data
+    },
   }
 }

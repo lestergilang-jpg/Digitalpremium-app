@@ -128,6 +128,7 @@ import { formatRupiah } from '@/dashboard/lib/currency.util'
 import { formatDateIdStandard } from '@/dashboard/lib/time-converter.util'
 import { AccountServiceGenerator, GetAccountsParamsSchema } from '@/dashboard/services/account.service'
 import { ProductServiceGenerator } from '@/dashboard/services/product.service'
+import { SettingServiceGenerator } from '@/dashboard/services/setting.service'
 import { API_URL } from '@/dashboard/constants/api-url.cont'
 import { useGlobalAlertDialog } from '@/dashboard/context-providers/alert-dialog.provider'
 import { useAuth } from '@/dashboard/context-providers/auth.provider'
@@ -151,6 +152,12 @@ function RouteComponent() {
   )
 
   const productService = ProductServiceGenerator(
+    API_URL,
+    auth.tenant!.accessToken,
+    auth.tenant!.id,
+  )
+
+  const settingService = SettingServiceGenerator(
     API_URL,
     auth.tenant!.accessToken,
     auth.tenant!.id,
@@ -197,6 +204,8 @@ function RouteComponent() {
   const [netflixTokenCache, setNetflixTokenCache] = useState<Record<string, {token: string, pcLink?: string, mobileLink?: string, tvLink?: string, generalLink?: string}>>({})
   const [dialogImportCookiesOpen, setDialogImportCookiesOpen] = useState<boolean>(false)
   const [importCookiesValue, setImportCookiesValue] = useState<string>('')
+  const [dialogSyncCookiesOpen, setDialogSyncCookiesOpen] = useState<boolean>(false)
+  const [selectedSyncBot, setSelectedSyncBot] = useState<string>('')
   const [dialogBulkEditOpen, setDialogBulkEditOpen] = useState<boolean>(false)
   const [bulkActionType, setBulkActionType] = useState<string>('')
   const [bulkModalAmount, setBulkModalAmount] = useState<string>('')
@@ -228,6 +237,41 @@ function RouteComponent() {
       toast.error(`Gagal melakukan operasi massal: ${error.message}`)
     },
   })
+
+  const syncCookiesFromBotMutation = useMutation({
+    mutationFn: ({ accountId, email, botName }: { accountId: string; email: string; botName: string }) =>
+      accountService.syncCookiesFromBot(accountId, email, botName),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['account'] })
+      toast.success(data.message || 'Cookies berhasil disinkronkan dari Bot!')
+      setDialogSyncCookiesOpen(false)
+      setSelectedSyncBot('')
+    },
+    onError: (error: any) => {
+      toast.error(`Gagal menyinkronkan cookies: ${error.message}`)
+    }
+  })
+
+  const { data: activeBots, isLoading: isLoadingBots } = useQuery({
+    queryKey: ['activeBots'],
+    queryFn: () => settingService.getActiveBots(),
+    enabled: dialogSyncCookiesOpen,
+  })
+
+  const handleOpenSyncCookies = (account: Account) => {
+    setSelectedAccount(account)
+    setDialogSyncCookiesOpen(true)
+  }
+
+  const handleStartSyncCookies = () => {
+    if (!selectedAccountState || !selectedSyncBot) return
+    toast.info(`Menghubungi Bot '${selectedSyncBot}' untuk sinkronisasi...`, { duration: 5000 })
+    syncCookiesFromBotMutation.mutate({
+      accountId: selectedAccountState.id,
+      email: selectedAccountState.email.email,
+      botName: selectedSyncBot
+    })
+  }
 
   const { socket } = useSocket()
   const [tvPinModalOpen, setTvPinModalOpen] = useState(false)
@@ -1809,6 +1853,15 @@ function RouteComponent() {
                                     {' '}
                                     Import Cookies
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onSelect={() => handleOpenSyncCookies(account)}
+                                  >
+                                    <span>
+                                      <RefreshCw className={syncCookiesFromBotMutation.isPending ? 'animate-spin' : ''} />
+                                    </span>
+                                    {' '}
+                                    Sinkronkan Cookies dari Bot
+                                  </DropdownMenuItem>
                                 </>
                               )}
                             </DropdownMenuContent>
@@ -2592,6 +2645,55 @@ function RouteComponent() {
             </DialogClose>
             <Button onClick={submitImportCookies} disabled={importNetflixCookiesMutation.isPending || !importCookiesValue.trim()}>
               {importNetflixCookiesMutation.isPending ? 'Menyimpan...' : 'Simpan Cookies'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialogSyncCookiesOpen} onOpenChange={setDialogSyncCookiesOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Sinkronkan Cookies dari Bot</DialogTitle>
+            <DialogDescription>
+              Pilih salah satu bot aktif di bawah ini untuk mengambil cookies Netflix terbaru dari file sesi lokal bot dan menyinkronkannya kembali ke database.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 mt-4">
+            <div className="flex flex-col gap-2">
+              <Label className="text-sm font-semibold">Pilih Bot</Label>
+              {isLoadingBots ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground p-3 border rounded-md bg-muted/20">
+                  <Loader2 className="size-4 animate-spin text-primary" /> Memuat daftar bot online...
+                </div>
+              ) : !activeBots || activeBots.length === 0 ? (
+                <div className="text-xs text-destructive bg-destructive/10 p-3.5 border border-destructive/20 rounded-md">
+                  Tidak ada bot yang aktif (online) saat ini untuk melakukan sinkronisasi.
+                </div>
+              ) : (
+                <Select value={selectedSyncBot} onValueChange={setSelectedSyncBot}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Pilih bot untuk sinkronisasi..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeBots.map((bot, idx) => (
+                      <SelectItem key={idx} value={bot.name}>
+                        {bot.name} {bot.is_primary ? '(Utama)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="mt-4">
+            <DialogClose asChild>
+              <Button variant="outline" disabled={syncCookiesFromBotMutation.isPending}>Batal</Button>
+            </DialogClose>
+            <Button 
+              onClick={handleStartSyncCookies} 
+              disabled={syncCookiesFromBotMutation.isPending || !selectedSyncBot || !activeBots || activeBots.length === 0}
+            >
+              {syncCookiesFromBotMutation.isPending ? 'Menyinkronkan...' : 'Mulai Sinkronisasi'}
             </Button>
           </DialogFooter>
         </DialogContent>
