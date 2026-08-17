@@ -700,6 +700,62 @@ export class PublicService {
     });
   }
 
+  async handleSubscriptionPaymentNotify(tenantId: string, body: any) {
+    const { order, transaction } = body;
+    const transactionStatus = transaction?.status;
+
+    if (transactionStatus !== 'SUCCESS') {
+      return { ok: true };
+    }
+
+    const dbTransaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema('master', dbTransaction);
+
+      const [tenants] = await this.postgresProvider.rawQuery(
+        `SELECT id, subscription_ends_at, trial_ends_at FROM tenant WHERE id = :tenantId`,
+        {
+          replacements: { tenantId },
+          transaction: dbTransaction,
+        }
+      );
+
+      if (!tenants || (tenants as any[]).length === 0) {
+        await dbTransaction.commit();
+        return { ok: true };
+      }
+
+      const tenant = (tenants as any[])[0];
+      let baseDate = new Date();
+
+      if (tenant.subscription_ends_at && new Date(tenant.subscription_ends_at) > baseDate) {
+        baseDate = new Date(tenant.subscription_ends_at);
+      }
+
+      const newSubscriptionEndsAt = new Date(baseDate);
+      newSubscriptionEndsAt.setDate(newSubscriptionEndsAt.getDate() + 30);
+
+      await this.postgresProvider.rawQuery(
+        `UPDATE tenant SET subscription_ends_at = :newSubscriptionEndsAt, status = 'active' WHERE id = :tenantId`,
+        {
+          replacements: {
+            newSubscriptionEndsAt,
+            tenantId,
+          },
+          transaction: dbTransaction,
+        }
+      );
+
+      await dbTransaction.commit();
+      this.logger.log(`[SubscriptionNotify] Successfully extended subscription for tenant: ${tenantId} to ${newSubscriptionEndsAt.toISOString()}`);
+      return { ok: true };
+    } catch (error: any) {
+      await dbTransaction.rollback();
+      this.logger.error(`[SubscriptionNotify] Error processing notification: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
   // ─── PAYMENT NOTIFY WEBHOOK (DOKU) ───────────────────────────────────────────
 
   async handlePaymentNotify(tenantId: string, body: any) {
@@ -1430,6 +1486,202 @@ export class PublicService {
     } catch (error) {
       await transaction.rollback();
       throw error;
+    }
+  }
+
+  async convertNetflixCookies(cookiesInput: any) {
+    let cookiesList: any[] = [];
+
+    if (typeof cookiesInput === 'string') {
+      const trimmed = cookiesInput.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            cookiesList = parsed;
+          } else if (parsed && Array.isArray(parsed.cookies)) {
+            cookiesList = parsed.cookies;
+          } else if (parsed && typeof parsed === 'object') {
+            cookiesList = Object.entries(parsed).map(([name, value]) => ({ name, value }));
+          }
+        } catch (e) {
+          // If JSON parse fails, process as semicolon-separated string
+        }
+      }
+      
+      if (cookiesList.length === 0) {
+        // Parse semicolon separated cookies
+        const pairs = trimmed.split(';');
+        for (const pair of pairs) {
+          const parts = pair.split('=');
+          if (parts.length >= 2) {
+            cookiesList.push({
+              name: parts[0].trim(),
+              value: parts.slice(1).join('=').trim()
+            });
+          }
+        }
+      }
+    } else if (Array.isArray(cookiesInput)) {
+      cookiesList = cookiesInput;
+    } else if (cookiesInput && typeof cookiesInput === 'object') {
+      if (Array.isArray(cookiesInput.cookies)) {
+        cookiesList = cookiesInput.cookies;
+      } else {
+        cookiesList = Object.entries(cookiesInput).map(([name, value]) => ({ name, value }));
+      }
+    }
+
+    const netflixIdCookie = cookiesList.find((c: any) => c && (c.name === 'NetflixId' || c.key === 'NetflixId'));
+    const secureNetflixIdCookie = cookiesList.find((c: any) => c && (c.name === 'SecureNetflixId' || c.key === 'SecureNetflixId'));
+    const nfvdidCookie = cookiesList.find((c: any) => c && (c.name === 'nfvdid' || c.key === 'nfvdid'));
+
+    let cookieHeader = '';
+    if (netflixIdCookie) {
+      const cookieStrings: string[] = [];
+      cookieStrings.push(`NetflixId=${netflixIdCookie.value}`);
+      if (secureNetflixIdCookie) cookieStrings.push(`SecureNetflixId=${secureNetflixIdCookie.value}`);
+      if (nfvdidCookie) cookieStrings.push(`nfvdid=${nfvdidCookie.value}`);
+      cookieHeader = cookieStrings.join('; ');
+    } else {
+      // Fallback: build cookie header from any serialized entries
+      if (cookiesList.length > 0) {
+        cookieHeader = cookiesList.map(c => `${c.name || c.key || ''}=${c.value || ''}`).filter(Boolean).join('; ');
+      } else if (typeof cookiesInput === 'string') {
+        cookieHeader = cookiesInput.trim();
+      }
+    }
+
+    if (!cookieHeader || !cookieHeader.includes('NetflixId=')) {
+      throw new BadRequestException('Cookies Netflix tidak valid atau NetflixId tidak ditemukan.');
+    }
+
+    const QUERY_PARAMS: Record<string, string> = {
+      "appVersion": "15.48.1",
+      "config": '{"gamesInTrailersEnabled":"false","isTrailersEvidenceEnabled":"false","cdsMyListSortEnabled":"true","kidsBillboardEnabled":"true","addHorizontalBoxArtToVideoSummariesEnabled":"false","skOverlayTestEnabled":"false","homeFeedTestTVMovieListsEnabled":"false","baselineOnIpadEnabled":"true","trailersVideoIdLoggingFixEnabled":"true","postPlayPreviewsEnabled":"false","bypassContextualAssetsEnabled":"false","roarEnabled":"false","useSeason1AltLabelEnabled":"false","disableCDSSearchPaginationSectionKinds":["searchVideoCarousel"],"cdsSearchHorizontalPaginationEnabled":"true","searchPreQueryGamesEnabled":"true","kidsMyListEnabled":"true","billboardEnabled":"true","useCDSGalleryEnabled":"true","contentWarningEnabled":"true","videosInPopularGamesEnabled":"true","avifFormatEnabled":"false","sharksEnabled":"true"}',
+      "device_type": "NFAPPL-02-",
+      "esn": "NFAPPL-02-IPHONE8=1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200",
+      "idiom": "phone",
+      "iosVersion": "15.8.5",
+      "isTablet": "false",
+      "languages": "en-US",
+      "locale": "en-US",
+      "maxDeviceWidth": "375",
+      "model": "saget",
+      "modelType": "IPHONE8-1",
+      "odpAware": "true",
+      "path": '["account","token","default"]',
+      "pathFormat": "graph",
+      "pixelDensity": "2.0",
+      "progressive": "false",
+      "responseFormat": "json"
+    };
+
+    const urlObj = new URL("https://ios.prod.ftl.netflix.com/iosui/user/15.48");
+    for (const [k, v] of Object.entries(QUERY_PARAMS)) {
+      urlObj.searchParams.set(k, v);
+    }
+
+    const headers = {
+      "User-Agent": "Argo/15.48.1 (iPhone; iOS 15.8.5; Scale/2.00)",
+      "x-netflix.request.attempt": "1",
+      "x-netflix.request.client.user.guid": "A4CS633D7VCBPE2GPK2HL4EKOE",
+      "x-netflix.context.profile-guid": "A4CS633D7VCBPE2GPK2HL4EKOE",
+      "x-netflix.request.routing": '{"path":"/nq/mobile/nqios/~15.48.0/user","control_tag":"iosui_argo"}',
+      "x-netflix.context.app-version": "15.48.1",
+      "x-netflix.argo.translated": "true",
+      "x-netflix.context.form-factor": "phone",
+      "x-netflix.context.sdk-version": "2012.4",
+      "x-netflix.client.appversion": "15.48.1",
+      "x-netflix.context.max-device-width": "375",
+      "x-netflix.context.ab-tests": "",
+      "x-netflix.tracing.cl.useractionid": "4DC655F2-9C3C-4343-8229-CA1B003C3053",
+      "x-netflix.client.type": "argo",
+      "x-netflix.client.ftl.esn": "NFAPPL-02-IPHONE8=1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200",
+      "x-netflix.context.locales": "en-US",
+      "x-netflix.context.top-level-uuid": "90AFE39F-ADF1-4D8A-B33E-528730990FE3",
+      "x-netflix.client.iosversion": "15.8.5",
+      "accept-language": "en-US;q=1",
+      "x-netflix.argo.abtests": "",
+      "x-netflix.context.os-version": "15.8.5",
+      "x-netflix.request.client.context": '{"appState":"foreground"}',
+      "x-netflix.context.ui-flavor": "argo",
+      "x-netflix.argo.nfnsm": "9",
+      "x-netflix.context.pixel-density": "2.0",
+      "x-netflix.request.toplevel.uuid": "90AFE39F-ADF1-4D8A-B33E-528730990FE3",
+      "x-netflix.request.client.timezoneid": "Asia/Dhaka",
+      "Cookie": cookieHeader
+    };
+
+    try {
+      const fetchResponse = await fetch(urlObj.toString(), {
+        method: "GET",
+        headers: headers
+      });
+
+      if (fetchResponse.ok) {
+        const resJson = await fetchResponse.json() as any;
+        const nftoken = resJson?.value?.account?.token?.default?.token;
+
+        if (nftoken) {
+          const pcUrl = `https://www.netflix.com/login?nftoken=${nftoken}`;
+          const mobileUrl = `https://www.netflix.com/unsupported?nftoken=${nftoken}`;
+          const tvUrl = `https://www.netflix.com/tv9?nftoken=${nftoken}`;
+          const generalUrl = `https://www.netflix.com/account?nftoken=${nftoken}`;
+
+          // Create short urls inside master schema
+          const masterTx = await this.postgresProvider.transaction();
+          try {
+            await this.postgresProvider.setSchema('master', masterTx);
+
+            const generateShort = async (url: string) => {
+              const code = crypto.randomBytes(4).toString('hex');
+              const expiresAt = new Date();
+              expiresAt.setHours(expiresAt.getHours() + 24);
+              await this.shortUrlRepository.create(
+                { id: code, target_url: url, expires_at: expiresAt },
+                { transaction: masterTx }
+              );
+              return code;
+            };
+
+            const [pcCode, mobileCode, tvCode, generalCode] = await Promise.all([
+              generateShort(pcUrl),
+              generateShort(mobileUrl),
+              generateShort(tvUrl),
+              generateShort(generalUrl)
+            ]);
+
+            await masterTx.commit();
+
+            let landingUrl = process.env.LANDING_URL || 'digitalpremium.id';
+            if (!landingUrl.startsWith('http')) {
+              landingUrl = `https://${landingUrl}`;
+            }
+
+            return {
+              success: true,
+              token: nftoken,
+              pcLink: `${landingUrl}/l/${pcCode}`,
+              mobileLink: `${landingUrl}/l/${mobileCode}`,
+              tvLink: `${landingUrl}/l/${tvCode}`,
+              generalLink: `${landingUrl}/l/${generalCode}`
+            };
+          } catch (e: any) {
+            try {
+              await masterTx.rollback();
+            } catch (err) {}
+            throw new BadRequestException(`Gagal membuat shortlink: ${e.message}`);
+          }
+        } else {
+          throw new BadRequestException('nftoken tidak ditemukan dalam respon FTL Netflix. Pastikan Cookie Anda aktif.');
+        }
+      } else {
+        throw new BadRequestException(`Netflix FTL API gagal merespon: ${fetchResponse.statusText}`);
+      }
+    } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
+      throw new BadRequestException(`Gagal menghubungi Netflix: ${err.message}`);
     }
   }
 

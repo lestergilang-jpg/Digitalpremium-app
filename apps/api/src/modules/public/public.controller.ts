@@ -122,7 +122,7 @@ export class PublicController {
     @Body() body: any,
   ) {
     // For DOKU notifications, extract tenantId from order.invoice_number
-    // Format: VC-TENANTID-TIMESTAMP
+    // Format: VC-TENANTID-TIMESTAMP or SUB-TENANTID-TIMESTAMP
     const orderId = body.order?.invoice_number || body.order_id || '';
     const parts = orderId.split('-');
 
@@ -135,6 +135,11 @@ export class PublicController {
 
     const tenantId = parts[1].toLowerCase();
     console.log(`[PaymentNotify] Extracted Tenant: ${tenantId}`);
+
+    if (parts[0] === 'SUB') {
+      return this.publicService.handleSubscriptionPaymentNotify(tenantId, body);
+    }
+
     return this.publicService.handlePaymentNotify(tenantId, body);
   }
 
@@ -242,6 +247,14 @@ export class PublicController {
     const tenantId = await this.getTenantId(host, xTenantId, xForwardedHost);
     return this.publicService.getNetflixTokenForBuyer(tenantId, token);
   }
+
+  @Post('convert-netflix-cookies')
+  async convertNetflixCookies(
+    @Body('cookies') cookies: any,
+  ) {
+    return this.publicService.convertNetflixCookies(cookies);
+  }
+
 
   @Get('tutorial')
   async getTutorials(@Headers() headers: any) {
