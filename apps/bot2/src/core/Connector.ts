@@ -712,7 +712,7 @@ export class Connector {
 
       this.logger.info(`[Connector] Starting startup session sync: found ${netflixFiles.length} Netflix sessions`);
 
-      const batchSize = 20;
+      const batchSize = 100;
       let currentBatch: Array<{ platform: string; identifier: string; sessionData: any }> = [];
 
       for (const file of netflixFiles) {
