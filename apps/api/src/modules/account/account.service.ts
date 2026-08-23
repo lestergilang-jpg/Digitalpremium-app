@@ -2328,8 +2328,7 @@ export class AccountService {
         this.logger.error(`Failed to save imported cookies to DB: ${err.message}`, err.stack, 'AccountServiceImportCookies');
       }
 
-      await this.socketGateway.importNetflixCookiesToBot(tenantId, email, cookies);
-      return { success: true, message: 'Cookies berhasil di-import ke Bot' };
+      return { success: true, message: 'Cookies berhasil disimpan ke database' };
     } catch (error) {
       if (error instanceof NotFoundException) throw error;
       throw new Error(`Failed to import Netflix cookies: ${error.message}`);
@@ -2337,8 +2336,8 @@ export class AccountService {
   }
 
   async syncCookiesFromBot(tenantId: string, email: string, botName: string, accountId: string) {
-    const cookies = await this.socketGateway.getNetflixCookiesFromSpecificBot(tenantId, email, botName);
-    return this.importNetflixCookies(tenantId, accountId, cookies);
+    // Deprecated: Bot no longer stores local state. Cookies are always fetched from DB.
+    return { success: true, message: 'Sync tidak diperlukan (State tersimpan di Database)' };
   }
 
   async getMoveHistoryByProduct(tenantId: string, productId: string) {

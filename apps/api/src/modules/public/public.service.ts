@@ -28,6 +28,7 @@ import {
   TENANT_OWNER_REPOSITORY,
   ARTICLE_REPOSITORY,
   SHORT_URL_REPOSITORY,
+  ACCOUNT_SESSION_REPOSITORY,
 } from 'src/constants/database.const';
 import { AccountProfile } from 'src/database/models/account-profile.model';
 import { AccountUser } from 'src/database/models/account-user.model';
@@ -46,6 +47,7 @@ import { Tenant } from 'src/database/models/tenant.model';
 import { Tutorial } from 'src/database/models/tutorial.model';
 import { Article } from 'src/database/models/article.model';
 import { ShortUrl } from 'src/database/models/short-url.model';
+import { AccountSession } from 'src/database/models/account-session.model';
 import { PostgresProvider } from 'src/database/postgres.provider';
 import { TenantProvisioningService } from '../tenant/tenant-provisioning.service';
 import { PromoService } from '../promo/promo.service';
@@ -99,6 +101,8 @@ export class PublicService {
     private readonly taskQueueService: TaskQueueService,
     @Inject(SHORT_URL_REPOSITORY)
     private readonly shortUrlRepository: typeof ShortUrl,
+    @Inject(ACCOUNT_SESSION_REPOSITORY)
+    private readonly accountSessionRepository: typeof AccountSession,
   ) {}
 
   async getSettings(tenantId: string) {
@@ -124,6 +128,28 @@ export class PublicService {
 
       await transaction.commit();
       return result;
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  async getSession(tenantId: string, platform: string, identifier: string) {
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema(tenantId, transaction);
+      const session = await this.accountSessionRepository.findOne({
+        where: { platform, identifier },
+        transaction,
+      });
+
+      await transaction.commit();
+
+      if (!session) {
+        throw new NotFoundException(`Session for platform ${platform} and identifier ${identifier} not found`);
+      }
+
+      return session.session_data;
     } catch (error) {
       await transaction.rollback();
       throw error;

@@ -15,14 +15,21 @@ export class NetflixGetTokenService {
 
     const emailFileName = email.toLowerCase().replace(/[.@]/g, '_');
     
-    // Use getDataRoot() to respect cloud_data_dir GDrive sync config
-    const sessionPath = path.join(getDataRoot(), "session_data", `netflix_${emailFileName}.json`);
-
-    if (!fs.existsSync(sessionPath)) {
-      throw new Error(`Session cookies not found for this account on bot.`);
+    let sessionData: any = null;
+    try {
+      const response = await fetch(`${this.ctx.apiBaseUrl}/public/session/${this.ctx.instanceId}/${emailFileName}`, {
+        headers: { 
+            'Authorization': `Bearer ${this.ctx.authCredentials.token}`,
+            'x-tenant-id': this.ctx.authCredentials.tenantId
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Session cookies not found for this account on bot. API returned ${response.status}`);
+      }
+      sessionData = await response.json();
+    } catch (err: any) {
+      throw new Error(`Session cookies not found for this account on bot. Error: ${err.message}`);
     }
-
-    const sessionData = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
     const netflixIdCookie = sessionData.cookies?.find((c: any) => c.name === "NetflixId");
     const secureNetflixIdCookie = sessionData.cookies?.find((c: any) => c.name === "SecureNetflixId");
     const nfvdidCookie = sessionData.cookies?.find((c: any) => c.name === "nfvdid");

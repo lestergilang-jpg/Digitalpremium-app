@@ -106,6 +106,19 @@ export class PublicController {
     return this.publicService.getSettings(tenantId);
   }
 
+  @Get('session/:platform/:identifier')
+  async getSession(
+    @Headers() headers: any,
+    @Param('platform') platform: string,
+    @Param('identifier') identifier: string,
+  ) {
+    const host = headers.host || '';
+    const xTenantId = headers['x-tenant-id'];
+    const xForwardedHost = headers['x-forwarded-host'];
+    const tenantId = await this.getTenantId(host, xTenantId, xForwardedHost);
+    return this.publicService.getSession(tenantId, platform, identifier);
+  }
+
   @Post('payment/create')
   async createPayment(
     @Headers() headers: any,

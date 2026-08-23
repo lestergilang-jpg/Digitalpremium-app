@@ -8,7 +8,7 @@ import type { Database } from './Database.js';
 import type { Logger } from './Logger.js';
 import type { EventBus } from './EventBus.js';
 import type { BaseModule } from './BaseModule.js';
-import { getGlobalBrowser, createContext, closeGlobalBrowser, closeContext, getStorageStatePath, onBrowserDisconnect, onBrowserReady, waitForBrowserReady, isGlobalBrowserConnected, recycleGlobalBrowser } from '../utils/browser.js';
+import { getGlobalBrowser, createContext, closeGlobalBrowser, closeContext, onBrowserDisconnect, onBrowserReady, waitForBrowserReady, isGlobalBrowserConnected, recycleGlobalBrowser } from '../utils/browser.js';
 import { AppConfig } from '../types/config.type.js';
 import { TaskRow } from '../types/database.type.js';
 import { Task, TaskInput, TaskSource } from '../types/task.type.js';
@@ -433,13 +433,14 @@ export class TaskManager {
         let ownContext = false;
 
         if (!context) {
-            // Need to create a new context from global browser
-            const browser = await getGlobalBrowser();
-            const storagePath = getStorageStatePath(task.moduleInstanceId);
-            context = await createContext(browser, storagePath);
-            module.setBrowserContext(context);
+            // Determine context name for one-off tasks (e.g. netflix requires email)
+            let contextName = 'default';
+            if (task.payload?.email && typeof task.payload.email === 'string') {
+                contextName = task.payload.email.toLowerCase().replace(/[.@]/g, '_');
+            }
+            context = await module.getOrCreateContext(contextName);
             ownContext = true;
-            this.logger.debug(`Created new browser context for task ${task.id}`);
+            this.logger.debug(`Created/Loaded browser context for task ${task.id} (${contextName})`);
         } else {
             this.logger.debug(`Reusing existing browser context for task ${task.id}`);
         }

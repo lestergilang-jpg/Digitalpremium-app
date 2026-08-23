@@ -30,7 +30,7 @@ export async function launchBrowser(options?: LaunchOptions): Promise<Browser> {
  */
 export async function createContext(
     browser: Browser,
-    storageStatePath?: string,
+    storageState?: any,
     options?: { blockAssets?: boolean }
 ): Promise<BrowserContext> {
     const contextOptions: Parameters<Browser['newContext']>[0] = {
@@ -41,8 +41,8 @@ export async function createContext(
     };
 
     // Load storage state if exists
-    if (storageStatePath && existsSync(storageStatePath)) {
-        contextOptions.storageState = storageStatePath;
+    if (storageState) {
+        contextOptions.storageState = storageState;
     }
 
     const context = await browser.newContext(contextOptions);
@@ -63,31 +63,13 @@ export async function createContext(
 }
 
 /**
- * Save storage state (cookies, localStorage) to file
+ * Save storage state (cookies, localStorage) to memory
+ * Note: this used to save to file, now it just returns the state object from context
  */
 export async function saveStorageState(
-    context: BrowserContext,
-    path: string
-): Promise<void> {
-    // Ensure directory exists
-    const dir = dirname(path);
-    if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-    }
-
-    await context.storageState({ path });
-}
-
-/**
- * Get storage state path for a module instance and context
- * @param instanceId - Module instance ID
- * @param contextName - Context name (default: 'default')
- */
-export function getStorageStatePath(instanceId: string, contextName: string = 'default'): string {
-    const filename = contextName === 'default'
-        ? `${instanceId}.json`
-        : `${instanceId}_${contextName}.json`;
-    return resolve(getDataRoot(), 'session_data', filename);
+    context: BrowserContext
+): Promise<any> {
+    return await context.storageState();
 }
 
 /**

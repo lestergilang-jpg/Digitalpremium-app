@@ -15,7 +15,6 @@ import {
     getGlobalBrowser,
     createContext,
     saveStorageState,
-    getStorageStatePath,
     closeContext,
 } from '../utils/browser.js';
 import type { ModuleConfig } from '../types/config.type.js';
@@ -87,7 +86,7 @@ export abstract class BaseModule {
      * Get or create browser context from global browser
      * @param contextName - Name of the context (default: 'default')
      */
-    protected async getOrCreateContext(
+    public async getOrCreateContext(
         contextName: string = BaseModule.DEFAULT_CONTEXT_NAME,
         options?: { blockAssets?: boolean }
     ): Promise<BrowserContext> {
@@ -110,8 +109,30 @@ export abstract class BaseModule {
         // Get global browser instance (lazy initialization)
         const browser = await getGlobalBrowser();
 
-        const storagePath = getStorageStatePath(this.instanceId, contextName);
-        const context = await createContext(browser, storagePath, options);
+        let storageState: any = null;
+        if (this.instanceId === 'netflix') {
+            try {
+                // Determine identifier (usually email in contextName, fallback)
+                const identifier = contextName;
+                const response = await fetch(`${this.apiBaseUrl}/public/session/${this.instanceId}/${identifier}`, {
+                    headers: { 
+                        'Authorization': `Bearer ${this.authCredentials.token}`,
+                        'x-tenant-id': this.authCredentials.tenantId
+                    }
+                });
+                
+                if (response.ok) {
+                    storageState = await response.json();
+                    this.logger.debug(`Loaded session state from DB for ${contextName}`);
+                } else {
+                    this.logger.debug(`No session state found in DB for ${contextName} (${response.status})`);
+                }
+            } catch (err: any) {
+                this.logger.warn(`Failed to fetch session state for ${contextName}: ${err.message}`);
+            }
+        }
+
+        const context = await createContext(browser, storageState, options);
         this.browserContexts.set(contextName, context);
         this.logger.debug(`Browser context '${contextName}' created from global browser`);
 
@@ -144,9 +165,8 @@ export abstract class BaseModule {
         const context = this.browserContexts.get(contextName);
         if (!context) return;
 
-        const storagePath = getStorageStatePath(this.instanceId, contextName);
-        await saveStorageState(context, storagePath);
-        this.logger.debug(`Session '${contextName}' saved`);
+        const storageState = await saveStorageState(context);
+        this.logger.debug(`Session '${contextName}' saved in memory`);
 
         // Emit update to eventBus so Connector can upload to database
         if (this.instanceId !== 'netflix') {
@@ -154,15 +174,14 @@ export abstract class BaseModule {
         }
 
         try {
-            if (fs.existsSync(storagePath)) {
-                const sessionContent = fs.readFileSync(storagePath, 'utf8');
-                const sessionData = JSON.parse(sessionContent);
+            if (storageState) {
+                const sessionData = storageState;
                 
                 const cacheKey = `${this.instanceId}:${contextName}`;
                 // Only compare cookie name and value (ignore expires, path, domain which might shift dynamically)
                 const cookiesStr = sessionData.cookies 
                     ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value }))) 
-                    : sessionContent;
+                    : JSON.stringify(sessionData);
 
                 if (this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
                     return; // Avoid spamming if cookies haven't changed
