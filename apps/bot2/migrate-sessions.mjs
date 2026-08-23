@@ -78,7 +78,7 @@ async function migrate() {
       try {
         const sessionData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (sessionData && sessionData.cookies) {
-          currentBatch.push({ platform: 'netflix', identifier, sessionData });
+          currentBatch.push({ platform, identifier, sessionData });
           totalMigrated++;
         }
 
