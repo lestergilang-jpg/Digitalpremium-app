@@ -615,7 +615,7 @@ export class ShopeeOrderModule extends BaseModule {
     }
 
     this.logger.info("Login ke Shopee Berhasil");
-    await this.saveSession("shopee");
+    await this.saveSession("shopee", true);
   }
 
   private async handleVerify(page: Page): Promise<void> {

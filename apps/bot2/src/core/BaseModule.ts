@@ -156,27 +156,39 @@ export abstract class BaseModule {
         this.logger.debug('All browser contexts invalidated');
     }
 
+    private lastSavedSessionTime: Map<string, number> = new Map();
+
     /**
      * Save specific context session state
      * @param contextName - Name of the context to save (default: 'default')
+     * @param force - If true, bypasses the time throttle
      */
-    async saveSession(contextName: string = BaseModule.DEFAULT_CONTEXT_NAME): Promise<void> {
+    async saveSession(contextName: string = BaseModule.DEFAULT_CONTEXT_NAME, force: boolean = false): Promise<void> {
         const context = this.browserContexts.get(contextName);
         if (!context) return;
         try {
+            const cacheKey = `${this.instanceId}:${contextName}`;
+            const now = Date.now();
+            const lastSavedTime = this.lastSavedSessionTime.get(cacheKey) || 0;
+            
+            // Throttle saves to max once per minute unless forced
+            if (!force && now - lastSavedTime < 60000) {
+                return;
+            }
+
             const storageState = await saveStorageState(context);
             const sessionData = storageState;
-            const cacheKey = `${this.instanceId}:${contextName}`;
             
             const cookiesStr = sessionData.cookies 
-                ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value }))) 
+                ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value })).sort((a: any, b: any) => a.name.localeCompare(b.name))) 
                 : JSON.stringify(sessionData);
 
-            if (this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
+            if (!force && this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
                 return; // Avoid spamming if cookies haven't changed
             }
 
             this.lastSavedSessionHash.set(cacheKey, cookiesStr);
+            this.lastSavedSessionTime.set(cacheKey, now);
 
             this.eventBus.emit('socket:session-updated', {
                 platform: this.instanceId,
