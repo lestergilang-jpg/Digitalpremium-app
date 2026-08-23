@@ -111,28 +111,24 @@ export abstract class BaseModule {
         const browser = await getGlobalBrowser();
 
         let storageState: any = null;
-        if (this.instanceId === 'netflix') {
-            try {
-                // Determine identifier (usually email in contextName, fallback)
-                const identifier = contextName;
-                const response = await fetch(`${this.apiBaseUrl}/public/session/${this.instanceId}/${identifier}`, {
-                    headers: { 
-                        'Authorization': `Bearer ${this.authCredentials.token}`,
-                        'x-tenant-id': this.authCredentials.tenantId
-                    }
-                });
-                
-                if (response.ok) {
-                    storageState = await response.json();
-                    this.logger.debug(`Loaded session state from DB for ${contextName}`);
-                } else {
-                    this.logger.debug(`No session state found in DB for ${contextName} (${response.status})`);
+        try {
+            // Determine identifier (usually email in contextName, fallback)
+            const identifier = contextName;
+            const response = await fetch(`${this.apiBaseUrl}/public/session/${this.instanceId}/${identifier}`, {
+                headers: { 
+                    'Authorization': `Bearer ${this.authCredentials.token}`,
+                    'x-tenant-id': this.authCredentials.tenantId
                 }
-            } catch (err: any) {
-                this.logger.warn(`Failed to fetch session state for ${contextName}: ${err.message}`);
+            });
+            
+            if (response.ok) {
+                storageState = await response.json();
+                this.logger.debug(`Loaded session state from DB for ${contextName}`);
+            } else {
+                this.logger.debug(`No session state found in DB for ${contextName} (${response.status})`);
             }
-        } else {
-            storageState = getStorageStatePath(this.instanceId, contextName);
+        } catch (err: any) {
+            this.logger.warn(`Failed to fetch session state for ${contextName}: ${err.message}`);
         }
 
         const context = await createContext(browser, storageState, options);
@@ -168,32 +164,26 @@ export abstract class BaseModule {
         const context = this.browserContexts.get(contextName);
         if (!context) return;
         try {
-            if (this.instanceId === 'netflix') {
-                const storageState = await saveStorageState(context);
-                const sessionData = storageState;
-                const cacheKey = `${this.instanceId}:${contextName}`;
-                
-                const cookiesStr = sessionData.cookies 
-                    ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value }))) 
-                    : JSON.stringify(sessionData);
+            const storageState = await saveStorageState(context);
+            const sessionData = storageState;
+            const cacheKey = `${this.instanceId}:${contextName}`;
+            
+            const cookiesStr = sessionData.cookies 
+                ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value }))) 
+                : JSON.stringify(sessionData);
 
-                if (this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
-                    return; // Avoid spamming if cookies haven't changed
-                }
-
-                this.lastSavedSessionHash.set(cacheKey, cookiesStr);
-
-                this.eventBus.emit('socket:session-updated', {
-                    platform: this.instanceId,
-                    identifier: contextName,
-                    sessionData,
-                });
-                this.logger.debug(`Session cookies saved for ${this.instanceId}:${contextName} to database`);
-            } else {
-                const storagePath = getStorageStatePath(this.instanceId, contextName);
-                await saveStorageState(context, storagePath);
-                this.logger.debug(`Session '${contextName}' saved to file`);
+            if (this.lastSavedSessionHash.get(cacheKey) === cookiesStr) {
+                return; // Avoid spamming if cookies haven't changed
             }
+
+            this.lastSavedSessionHash.set(cacheKey, cookiesStr);
+
+            this.eventBus.emit('socket:session-updated', {
+                platform: this.instanceId,
+                identifier: contextName,
+                sessionData,
+            });
+            this.logger.debug(`Session cookies saved for ${this.instanceId}:${contextName} to database`);
         } catch (e: any) {
             this.logger.error(`Failed to read or emit session update: ${e.message}`);
         }

@@ -44,17 +44,35 @@ async function migrate() {
     }
 
     const files = fs.readdirSync(sessionDir);
-    const netflixFiles = files.filter(f => f.startsWith('netflix_') && f.endsWith('.json'));
+    // Ignore directories and only take JSON files
+    const jsonFiles = files.filter(f => f.endsWith('.json') && fs.statSync(path.join(sessionDir, f)).isFile());
     
-    console.log(`Ditemukan ${netflixFiles.length} file session Netflix.`);
+    console.log(`Ditemukan ${jsonFiles.length} file session.`);
 
     const batchSize = 100;
     let currentBatch = [];
     let totalMigrated = 0;
 
-    for (const file of netflixFiles) {
-      // Hilangkan 'netflix_' dan '.json' untuk mendapatkan identifier
-      const identifier = file.replace(/^netflix_/, '').replace(/\.json$/, '');
+    for (const file of jsonFiles) {
+      // Filename format: instanceId_contextName.json or instanceId.json
+      let platform = '';
+      let identifier = '';
+      
+      const basename = file.replace(/\.json$/, '');
+      const parts = basename.split('_');
+      
+      if (parts.length > 1) {
+          platform = parts[0];
+          identifier = parts.slice(1).join('_');
+      } else {
+          platform = basename;
+          identifier = 'default';
+      }
+
+      if (platform.startsWith('netflix')) {
+          platform = 'netflix';
+      }
+
       const filePath = path.join(sessionDir, file);
       
       try {
