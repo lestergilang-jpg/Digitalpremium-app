@@ -22,12 +22,15 @@ function setStoredTenant(tenant: ITenant | null) {
   }
 }
 
-// Global interceptor for 401 Unauthorized
+// Global interceptor for 401 Unauthorized and 402 Payment Required
 const originalFetch = window.fetch
 window.fetch = async (...args) => {
   const response = await originalFetch(...args)
   if (response.status === 401) {
     window.dispatchEvent(new Event('vc-unauthorized'))
+  }
+  else if (response.status === 402) {
+    window.dispatchEvent(new Event('vc-payment-required'))
   }
   return response
 }
@@ -130,10 +133,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.location.href = '/login'
       }
     }
+
+    const handlePaymentRequired = () => {
+      if (window.location.pathname !== '/billing') {
+        window.location.href = '/billing'
+      }
+    }
     
     window.addEventListener('vc-unauthorized', handleUnauthorized)
+    window.addEventListener('vc-payment-required', handlePaymentRequired)
     return () => {
       window.removeEventListener('vc-unauthorized', handleUnauthorized)
+      window.removeEventListener('vc-payment-required', handlePaymentRequired)
     }
   }, [logout])
 

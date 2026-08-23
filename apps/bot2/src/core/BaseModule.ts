@@ -15,6 +15,7 @@ import {
     getGlobalBrowser,
     createContext,
     saveStorageState,
+    getStorageStatePath,
     closeContext,
 } from '../utils/browser.js';
 import type { ModuleConfig } from '../types/config.type.js';
@@ -130,6 +131,8 @@ export abstract class BaseModule {
             } catch (err: any) {
                 this.logger.warn(`Failed to fetch session state for ${contextName}: ${err.message}`);
             }
+        } else {
+            storageState = getStorageStatePath(this.instanceId, contextName);
         }
 
         const context = await createContext(browser, storageState, options);
@@ -164,21 +167,12 @@ export abstract class BaseModule {
     async saveSession(contextName: string = BaseModule.DEFAULT_CONTEXT_NAME): Promise<void> {
         const context = this.browserContexts.get(contextName);
         if (!context) return;
-
-        const storageState = await saveStorageState(context);
-        this.logger.debug(`Session '${contextName}' saved in memory`);
-
-        // Emit update to eventBus so Connector can upload to database
-        if (this.instanceId !== 'netflix') {
-            return;
-        }
-
         try {
-            if (storageState) {
+            if (this.instanceId === 'netflix') {
+                const storageState = await saveStorageState(context);
                 const sessionData = storageState;
-                
                 const cacheKey = `${this.instanceId}:${contextName}`;
-                // Only compare cookie name and value (ignore expires, path, domain which might shift dynamically)
+                
                 const cookiesStr = sessionData.cookies 
                     ? JSON.stringify(sessionData.cookies.map((c: any) => ({ name: c.name, value: c.value }))) 
                     : JSON.stringify(sessionData);
@@ -194,6 +188,11 @@ export abstract class BaseModule {
                     identifier: contextName,
                     sessionData,
                 });
+                this.logger.debug(`Session cookies saved for ${this.instanceId}:${contextName} to database`);
+            } else {
+                const storagePath = getStorageStatePath(this.instanceId, contextName);
+                await saveStorageState(context, storagePath);
+                this.logger.debug(`Session '${contextName}' saved to file`);
             }
         } catch (e: any) {
             this.logger.error(`Failed to read or emit session update: ${e.message}`);
