@@ -1105,11 +1105,11 @@ export class AccountService {
       const payload: NetflixResetPasswordPayload = {
         id: account.id,
         accountId: account.id,
-        email: account.email.email,
+        email: account.email?.email || account.email_id,
         password: account.account_password,
         newPassword: '',
-        subscription_expiry: account.subscription_expiry.toISOString(),
-        variant_name: account.product_variant.name,
+        subscription_expiry: account.subscription_expiry?.toISOString() || '',
+        variant_name: account.product_variant?.name || '',
         target_bot: targetBot,
       };
 
@@ -1153,10 +1153,10 @@ export class AccountService {
 
       const payload: NetflixAutoReloadPayload = {
         accountId: account.id,
-        email: account.email.email,
+        email: account.email?.email || account.email_id,
         password: account.account_password,
         billing: account.billing || '',
-        variant_name: account.product_variant.name,
+        variant_name: account.product_variant?.name || '',
         target_bot: targetBot,
       };
 
@@ -1200,10 +1200,10 @@ export class AccountService {
 
       const payload: any = {
         accountId: account.id,
-        email: account.email.email,
+        email: account.email?.email || account.email_id,
         password: account.account_password,
-        subscription_expiry: account.subscription_expiry.toISOString(),
-        variant_name: account.product_variant.name,
+        subscription_expiry: account.subscription_expiry?.toISOString() || '',
+        variant_name: account.product_variant?.name || '',
         target_bot: targetBot,
       };
 
@@ -1247,9 +1247,9 @@ export class AccountService {
 
       const payload = {
         accountId: account.id,
-        email: account.email.email,
+        email: account.email?.email || account.email_id,
         password: account.account_password,
-        variant_name: account.product_variant.name,
+        variant_name: account.product_variant?.name || '',
         target_bot: targetBot,
       };
 
