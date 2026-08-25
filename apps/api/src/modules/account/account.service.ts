@@ -2311,7 +2311,28 @@ export class AccountService {
           transaction,
         });
 
-        const cookiesToSave = Array.isArray(cookies) ? { cookies } : cookies;
+        let parsedCookies = Array.isArray(cookies) ? cookies : (cookies.cookies || []);
+        if (Array.isArray(parsedCookies)) {
+          parsedCookies = parsedCookies.map((c: any) => {
+            let sameSite = c.sameSite;
+            if (typeof sameSite === 'string') {
+              const lower = sameSite.toLowerCase();
+              if (lower === 'lax') sameSite = 'Lax';
+              else if (lower === 'strict') sameSite = 'Strict';
+              else if (lower === 'none' || lower === 'no_restriction') sameSite = 'None';
+              else sameSite = 'Lax';
+            } else if (!sameSite) {
+               // Playwright sometimes expects None for cross-site cookies, but Lax is a safe default
+               sameSite = 'Lax'; 
+            }
+            return { ...c, sameSite };
+          });
+        }
+        
+        const cookiesToSave = { 
+          ...(Array.isArray(cookies) ? {} : cookies), 
+          cookies: parsedCookies 
+        };
 
         if (existing) {
           await existing.update({ session_data: cookiesToSave }, { transaction });
