@@ -269,9 +269,9 @@ export class TaskQueueService {
         },
         { transaction },
       );
+      await transaction.commit();
       // Directly add to Redis stream bypassing ZSET delay
       await this.redisClient.xadd(STREAM_KEY, '*', 'taskData', `${TASK_REFERENCE_KEY}:${taskId}`);
-      await transaction.commit();
       return taskId;
     }
     catch (error) {
@@ -303,9 +303,9 @@ export class TaskQueueService {
         },
         { transaction },
       );
+      await transaction.commit();
       // Directly add to Redis stream bypassing ZSET delay
       await this.redisClient.xadd(STREAM_KEY, '*', 'taskData', `${TASK_REFERENCE_KEY}:${taskId}`);
-      await transaction.commit();
       return taskId;
     }
     catch (error) {
