@@ -116,7 +116,19 @@ export class NetflixGetTokenService {
     const nftoken = resJson?.value?.account?.token?.default?.token;
 
     if (!nftoken) {
-      throw new Error("nftoken not found in FTL response.");
+      this.ctx.logger.error(`[GetToken] nftoken not found. Full Response from Netflix: ${JSON.stringify(resJson)}`);
+      
+      const setCookieHeader = fetchResponse.headers.get('set-cookie');
+      if (setCookieHeader) {
+          this.ctx.logger.warn(`[GetToken] Netflix sent new cookies on fail: ${setCookieHeader}`);
+      }
+
+      throw new Error("nftoken not found in FTL response. Check logs for full Netflix response.");
+    }
+
+    const newCookies = fetchResponse.headers.get('set-cookie');
+    if (newCookies) {
+        this.ctx.logger.info(`[GetToken] ALERT! Netflix gave us NEW cookies on success: ${newCookies}`);
     }
 
     this.ctx.logger.info(`[GetToken] Successfully fetched Netflix token for ${email}`);
