@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+
 export function generateRandomPassword(length: number): string {
   const letters = 'abcdefghjkmnpqrstuvwxyz';
   const numbers = '0123456789';
@@ -100,4 +102,29 @@ export function calculateReloadExpiry(variantName: string): Date {
   const result = new Date(now);
   result.setMonth(result.getMonth() + 1);
   return result;
+}
+
+export function generateNetflixDeviceIds(email: string) {
+  // Gunakan email sebagai seed untuk generate ID perangkat yang unik namun konsisten per akun
+  const hash = crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex');
+  
+  // 1. GUID (26 karakter uppercase alphanumeric)
+  // Ambil setengah hash pertama, convert ke BigInt lalu base36 uppercase
+  const guid = BigInt('0x' + hash.slice(0, 32)).toString(36).toUpperCase().padStart(26, 'A').slice(0, 26);
+  
+  // 2. UUIDs (format standar 8-4-4-4-12)
+  const formatUUID = (h: string) => `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-A${h.slice(17,20)}-${h.slice(20,32)}`.toUpperCase();
+  const toplevelUuid = formatUUID(hash.slice(0, 32));
+  const userActionId = formatUUID(hash.slice(32, 64)); // Gunakan setengah hash kedua
+  
+  // 3. ESN (NFAPPL-02-IPHONE8=1-PXA- + 80 karakter hash)
+  const esnHash = crypto.createHash('sha512').update(email.toLowerCase().trim() + "ESN").digest('hex').toUpperCase().slice(0, 80);
+  const esn = `NFAPPL-02-IPHONE8=1-PXA-${esnHash}`;
+
+  return {
+    guid,
+    esn,
+    toplevelUuid,
+    userActionId
+  };
 }
