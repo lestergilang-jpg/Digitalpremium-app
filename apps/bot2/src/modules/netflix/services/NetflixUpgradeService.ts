@@ -240,7 +240,7 @@ export class NetflixUpgradeService {
 
   private async cleanupTask(page: any, contextName: string): Promise<void> {
     await page.close();
-    await this.ctx.saveSession(contextName);
+    await this.ctx.saveSession(contextName, true);
     const ctx = this.ctx.getContextByName(contextName);
     if (ctx) {
       await ctx.close();
