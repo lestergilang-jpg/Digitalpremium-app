@@ -46,17 +46,17 @@ export class EmailParser {
     }
     
     if (method === 'CODE_4') {
-      const otpMatch = cleanText.match(/\b(\d{4})\b/);
+      const otpMatch = cleanText.match(/^\s*(\d{4})\s*$/m);
       return otpMatch ? otpMatch[1] : null;
     }
     
     if (method === 'CODE_6') {
-      const otpMatch = cleanText.match(/\b(\d{6})\b/);
+      const otpMatch = cleanText.match(/^\s*(\d{6})\s*$/m);
       return otpMatch ? otpMatch[1] : null;
     }
     
     if (method === 'CODE_8') {
-      const otpMatch = cleanText.match(/\b(\d{8})\b/);
+      const otpMatch = cleanText.match(/^\s*(\d{8})\s*$/m);
       return otpMatch ? otpMatch[1] : null;
     }
 
