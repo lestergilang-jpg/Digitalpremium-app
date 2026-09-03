@@ -366,6 +366,15 @@ export default function HistoryPage() {
                                     ? 'Masa aktif/durasi langganan akun Anda telah berakhir. Kredensial dan akses akun disembunyikan demi keamanan. Silakan lakukan pembelian baru untuk melanjutkan.'
                                     : 'Akun sedang diproses atau voucher belum diredeem. Silakan hubungi admin jika transaksi Anda bermasalah.'}
                                 </p>
+                                
+                                {!purchase.is_expired && purchase.status === 'UNUSED' && (
+                                  <Link
+                                    href={`/redeem?code=${purchase.id}`}
+                                    className="mt-6 inline-flex items-center gap-2 px-6 py-2.5 bg-primary text-primary-foreground font-bold rounded-xl hover:bg-primary/90 transition-all text-xs uppercase tracking-wider shadow-md"
+                                  >
+                                    Claim Voucher Sekarang
+                                  </Link>
+                                )}
                               </div>
                             )}
 
