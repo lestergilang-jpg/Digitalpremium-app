@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Ip,
+  HttpCode,
 } from '@nestjs/common';
 import { TENANT_REPOSITORY } from 'src/constants/database.const';
 import { Tenant } from 'src/database/models/tenant.model';
@@ -132,6 +133,7 @@ export class PublicController {
   }
 
   @Post('payment/notify')
+  @HttpCode(200)
   handleNotify(
     @Body() body: any,
   ) {
