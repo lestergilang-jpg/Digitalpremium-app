@@ -799,16 +799,23 @@ export class PublicService {
         include: [{ model: ProductVariant, as: 'product_variant', include: [{ model: Product, as: 'product' }] }],
         transaction: dbTransaction,
       });
+      
+      this.logger.log(`[PaymentNotify DEBUG] Searching for voucher with payment_id: ${orderId}. Found: ${voucher ? voucher.id : 'NOT FOUND'}`);
+      
       if (!voucher) {
         await dbTransaction.commit();
+        this.logger.log(`[PaymentNotify DEBUG] Early exit because voucher not found.`);
         return { ok: true };
       }
 
       const isPaid = transactionStatus === 'SUCCESS';
       const isExpiredOrFailed = transactionStatus === 'FAILED' || transactionStatus === 'EXPIRED';
 
+      this.logger.log(`[PaymentNotify DEBUG] Evaluated status: isPaid=${isPaid}, isExpiredOrFailed=${isExpiredOrFailed}`);
+
       let shouldSendEmail = false;
       if (isPaid && voucher.payment_status !== 'PAID') {
+        this.logger.log(`[PaymentNotify DEBUG] Updating voucher ${voucher.id} to PAID and UNUSED`);
         shouldSendEmail = true;
         await voucher.update({ payment_status: 'PAID', status: 'UNUSED' }, { transaction: dbTransaction });
 
