@@ -143,11 +143,11 @@ export class PublicService {
         transaction,
       });
 
-      await transaction.commit();
-
       if (!session) {
         throw new NotFoundException(`Session for platform ${platform} and identifier ${identifier} not found`);
       }
+
+      await transaction.commit();
 
       return session.session_data;
     } catch (error) {
