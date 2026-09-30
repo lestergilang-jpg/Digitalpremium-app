@@ -14,6 +14,14 @@ COPY apps/landingpage apps/landingpage
 COPY packages packages
 
 RUN pnpm install --filter landingpage... --frozen-lockfile
+
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_MIDTRANS_CLIENT_KEY
+ARG NEXT_PUBLIC_PORTAL_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_MIDTRANS_CLIENT_KEY=$NEXT_PUBLIC_MIDTRANS_CLIENT_KEY
+ENV NEXT_PUBLIC_PORTAL_URL=$NEXT_PUBLIC_PORTAL_URL
+
 RUN pnpm --filter landingpage build
 
 FROM node:24-alpine AS runner

@@ -24,12 +24,42 @@ services:
       dockerfile: apps/api/Dockerfile
     restart: always
     environment:
+      - NODE_ENV=production
+      - APP_URL=${APP_URL}
+      - PORT=3000
+      - FRONTEND_URL=${FRONTEND_URL}
+      - SECRET=${SECRET}
+      - SOCKET_APP_BASE_URL=${SOCKET_APP_BASE_URL}
+      - SOCKET_INTERNAL_SECRET=${SOCKET_INTERNAL_SECRET}
+      - SOCKET_TEST_MODULE_ENABLED=false
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-123456}@db:5432/${DB_NAME:-volvecapital}
       - DATABASE_MIGRATION_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-123456}@db:5432/${DB_NAME:-volvecapital}
+      - DATABASE_POOL_MAX=50
+      - TENANT_SCHEMAS=
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-    env_file:
-      - apps/api/.env
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - MIDTRANS_IS_PRODUCTION=${MIDTRANS_IS_PRODUCTION:-false}
+      - DOKU_CLIENT_ID=${DOKU_CLIENT_ID}
+      - DOKU_SECRET_KEY=${DOKU_SECRET_KEY}
+      - DOKU_IS_PRODUCTION=${DOKU_IS_PRODUCTION:-true}
+      - DOKU_NOTIFY_URL=${DOKU_NOTIFY_URL}
+      - DOKU_MERCHANT_ID=${DOKU_MERCHANT_ID}
+      - DOKU_PRIVATE_KEY_FILE=${DOKU_PRIVATE_KEY_FILE:-/app/merchant_private.pem}
+      - VOUCHER_EXPIRY_HOURS=${VOUCHER_EXPIRY_HOURS:-24}
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USER=${MAIL_USER}
+      - MAIL_PASS=${MAIL_PASS}
+      - MAIL_FROM=${MAIL_FROM}
+      - STOCK_LOW_THRESHOLD=${STOCK_LOW_THRESHOLD:-3}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN:-}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID:-}
+      - WHATSAPP_BUSINESS_ACCOUNT_ID=${WHATSAPP_BUSINESS_ACCOUNT_ID:-}
+      - WHATSAPP_API_VERSION=${WHATSAPP_API_VERSION:-v20.0}
+      - WHATSAPP_TEMPLATE_NAME=${WHATSAPP_TEMPLATE_NAME:-hello_world}
+      - WHATSAPP_TEMPLATE_LANGUAGE=${WHATSAPP_TEMPLATE_LANGUAGE:-en_US}
+      - WHATSAPP_WEBHOOK_VERIFY_TOKEN=${WHATSAPP_WEBHOOK_VERIFY_TOKEN:-}
     depends_on:
       - db
       - redis
@@ -41,10 +71,14 @@ services:
       context: .
       dockerfile: apps/socket/Dockerfile
     restart: always
-    env_file:
-      - apps/api/.env
     environment:
+      - NODE_ENV=production
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-123456}@db:5432/${DB_NAME:-volvecapital}
+      - SECRET=${SECRET}
+      - SOCKET_INTERNAL_SECRET=${SOCKET_INTERNAL_SECRET}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     depends_on:
       - db
     ports:
@@ -55,8 +89,15 @@ services:
       context: .
       dockerfile: apps/email-reciever/Dockerfile
     restart: always
-    env_file:
-      - apps/api/.env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-123456}@db:5432/${DB_NAME:-volvecapital}
+      - SECRET=${SECRET}
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USER=${MAIL_USER}
+      - MAIL_PASS=${MAIL_PASS}
+      - MAIL_FROM=${MAIL_FROM}
     ports:
       - "5200:3000"
 
@@ -74,9 +115,11 @@ services:
     build:
       context: .
       dockerfile: apps/landingpage/Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://103.187.147.253:5000}
+        - NEXT_PUBLIC_MIDTRANS_CLIENT_KEY=${NEXT_PUBLIC_MIDTRANS_CLIENT_KEY}
+        - NEXT_PUBLIC_PORTAL_URL=${NEXT_PUBLIC_PORTAL_URL:-http://103.187.147.253:3001}
     restart: always
-    env_file:
-      - apps/landingpage/.env.local
     ports:
       - "3001:3000"
 
