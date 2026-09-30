@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.26.2",
   "scripts": {
     "build": "nest build",
-    "build:bundle": "ncc build src/main.ts -m -o dist_bundle",
+    "build:bundle": "ncc build src/main.ts -m -o dist_bundle && swc migrations -d dist_migrations",
     "start": "nest start",
     "dev": "nest start --watch",
     "start:dev": "nest start --watch",

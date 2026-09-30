@@ -4,11 +4,17 @@ import { ConfigService } from '@nestjs/config';
 import { Sequelize } from 'sequelize';
 import { SequelizeStorage, Umzug } from 'umzug';
 
-// Ensure tsconfig paths and ts-node are registered for migrations
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-require('ts-node/register');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-require('tsconfig-paths/register');
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    // Ensure tsconfig paths and ts-node are registered for migrations
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('ts-node/register');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('tsconfig-paths/register');
+  } catch (e) {
+    console.warn('Could not register ts-node or tsconfig-paths', e);
+  }
+}
 
 @Injectable()
 export class MigrationProvider {

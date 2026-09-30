@@ -23,7 +23,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY --chown=node:node --from=builder /app/apps/api/dist_bundle ./dist_bundle
-
+COPY --chown=node:node --from=builder /app/apps/api/dist_migrations ./migrations
 RUN npm install typescript && mkdir -p /app/dist_bundle/logs
 
 USER node
