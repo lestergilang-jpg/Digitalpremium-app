@@ -24,7 +24,7 @@ ENV NODE_ENV=production
 
 COPY --chown=node:node --from=builder /app/apps/email-reciever/dist_bundle ./dist_bundle
 
-RUN mkdir -p /app/dist_bundle/logs /app/storage \
+RUN npm install typescript && mkdir -p /app/dist_bundle/logs /app/storage \
   && chown -R node:node /app
 
 USER node
