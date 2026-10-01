@@ -218,17 +218,29 @@ export class StatisticService {
       const { start, end, prevStart, prevEnd, granularity } = this.resolveDateRange(params);
 
       // Build dynamic filters
-      let trxWhere = '';
+      // Exclude transactions associated with unpaid / pending vouchers
+      let trxWhere = ` AND NOT EXISTS (
+        SELECT 1 FROM "voucher" v
+        WHERE (v.transaction_id = t.id OR v.payment_id = t.id)
+          AND (v.payment_status IS NULL OR v.payment_status != 'PAID')
+      )`;
       if (params.platform) {
         trxWhere += ` AND t.platform ILIKE :platform`;
       }
       if (params.product_variant_id) {
-        trxWhere += ` AND t.id IN (
-          SELECT ti.transaction_id
-          FROM "transaction_item" ti
-          JOIN "account_user" au ON au.id = ti.account_user_id
-          JOIN "account" acc ON acc.id = au.account_id
-          WHERE acc.product_variant_id = :product_variant_id
+        trxWhere += ` AND (
+          t.id IN (
+            SELECT ti.transaction_id
+            FROM "transaction_item" ti
+            JOIN "account_user" au ON au.id = ti.account_user_id
+            JOIN "account" acc ON acc.id = au.account_id
+            WHERE acc.product_variant_id = :product_variant_id
+          )
+          OR t.id IN (
+            SELECT v.transaction_id
+            FROM "voucher" v
+            WHERE v.product_variant_id = :product_variant_id
+          )
         )`;
       }
 
@@ -442,8 +454,8 @@ export class StatisticService {
         SELECT 
           t.id,
           t.created_at AS date,
-          MAX(e.email) AS email,
-          MAX(CONCAT(p.name, ' - ', pv.name)) AS variant_name,
+          COALESCE(MAX(e.email), MAX(v.buyer_email), '-') AS email,
+          COALESCE(MAX(CONCAT(p.name, ' - ', pv.name)), MAX(CONCAT(vp.name, ' - ', vpv.name)), MAX(ti.name), '-') AS variant_name,
           t.customer,
           t.platform,
           t.total_price AS nominal
@@ -454,6 +466,9 @@ export class StatisticService {
         LEFT JOIN "email" e ON e.id = acc.email_id
         LEFT JOIN "product_variant" pv ON pv.id = acc.product_variant_id
         LEFT JOIN "product" p ON p.id = pv.product_id
+        LEFT JOIN "voucher" v ON (v.transaction_id = t.id OR v.payment_id = t.id)
+        LEFT JOIN "product_variant" vpv ON vpv.id = v.product_variant_id
+        LEFT JOIN "product" vp ON vp.id = vpv.product_id
         WHERE t.created_at >= :start AND t.created_at <= :end ${trxWhere}
         GROUP BY t.id, t.created_at, t.customer, t.platform, t.total_price
         ORDER BY t.created_at DESC
