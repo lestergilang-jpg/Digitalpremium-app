@@ -219,10 +219,10 @@ export class StatisticService {
 
       // Build dynamic filters
       // Exclude transactions associated with unpaid / pending vouchers
-      let trxWhere = ` AND NOT EXISTS (
-        SELECT 1 FROM "voucher" v
-        WHERE (v.transaction_id = t.id OR v.payment_id = t.id)
-          AND (v.payment_status IS NULL OR v.payment_status != 'PAID')
+      let trxWhere = ` AND t.id NOT IN (
+        SELECT transaction_id FROM "voucher" WHERE transaction_id IS NOT NULL AND (payment_status IS NULL OR payment_status != 'PAID')
+        UNION
+        SELECT payment_id FROM "voucher" WHERE payment_id IS NOT NULL AND (payment_status IS NULL OR payment_status != 'PAID')
       )`;
       if (params.platform) {
         trxWhere += ` AND t.platform ILIKE :platform`;
