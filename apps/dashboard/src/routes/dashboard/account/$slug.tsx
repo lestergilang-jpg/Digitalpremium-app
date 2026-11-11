@@ -1890,16 +1890,33 @@ function RouteComponent() {
                             </p>
                             <p className="font-semibold text-sm">
                               {(() => {
-                                let latestDate: Date | null = null;
+                                let earliestUserExpiry: Date | null = null;
                                 account.profile?.forEach((p) => {
                                   p.user?.forEach((u) => {
-                                    if (u.expired_at && (!latestDate || u.expired_at > latestDate)) {
-                                      latestDate = u.expired_at;
+                                    if (u.expired_at) {
+                                      const uDate = new Date(u.expired_at);
+                                      if (!earliestUserExpiry || uDate < earliestUserExpiry) {
+                                        earliestUserExpiry = uDate;
+                                      }
                                     }
                                   });
                                 });
-                                const resetDate = latestDate || account.batch_end_date;
-                                return resetDate ? formatDateIdStandard(resetDate) : '-';
+
+                                // Tentukan tanggal reset:
+                                // 1. Prioritaskan earliestUserExpiry (user aktif yang akan kedaluwarsa paling cepat)
+                                // 2. Jika tidak ada user expiry, fallback ke account.batch_end_date
+                                const candidateReset = earliestUserExpiry || (account.batch_end_date ? new Date(account.batch_end_date) : null);
+                                if (!candidateReset) return '-';
+
+                                // Batasi maksimal tanggal reset tidak boleh melewati subscription_expiry akun
+                                if (account.subscription_expiry) {
+                                  const subsExpiry = new Date(account.subscription_expiry);
+                                  if (candidateReset > subsExpiry) {
+                                    return formatDateIdStandard(subsExpiry);
+                                  }
+                                }
+
+                                return formatDateIdStandard(candidateReset);
                               })()}
                             </p>
                           </div>

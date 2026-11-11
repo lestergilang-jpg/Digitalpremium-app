@@ -486,20 +486,7 @@ export class AccountService {
         }
 
         // Check reset today
-        let latestUserExpiry: Date | null = null;
-        if (acc.profile && acc.profile.length > 0) {
-          for (const prof of acc.profile) {
-            prof.user?.forEach(u => {
-              if (u.expired_at) {
-                const uDate = new Date(u.expired_at);
-                if (!latestUserExpiry || uDate > latestUserExpiry) {
-                   latestUserExpiry = uDate;
-                }
-              }
-            });
-          }
-        }
-        const resetDate = latestUserExpiry || acc.batch_end_date;
+        const resetDate = acc.batch_end_date;
         if (resetDate) {
           const resetDateStr = getWibDateStr(resetDate);
           if (resetDateStr === todayStr) {
@@ -737,17 +724,55 @@ export class AccountService {
         ...updateAccountDto,
       };
        if (updateAccountDto.status && updateAccountDto.status !== 'active') {
-        // Raw SQL for robustness
-        await this.postgresProvider.rawQuery(
-          'UPDATE account_user SET status = \'expired\', expired_at = :now WHERE account_id = :accountId AND status = \'active\'',
-          {
-            replacements: { accountId, now: new Date() },
-            transaction,
-            type: QueryTypes.UPDATE,
-          },
-        );
-        accountUpdateData.batch_start_date = null;
-        accountUpdateData.batch_end_date = null;
+        if (updateAccountDto.status === 'ready') {
+          // Hanya expire user yang masa aktifnya memang sudah habis (expired_at <= now)
+          // User multi-hari (2-4 hari) yang masih aktif tetap dipertahankan
+          await this.postgresProvider.rawQuery(
+            `UPDATE account_user 
+             SET status = 'expired' 
+             WHERE account_id = :accountId 
+               AND status = 'active' 
+               AND expired_at <= :now`,
+            {
+              replacements: { accountId, now: new Date() },
+              transaction,
+              type: QueryTypes.UPDATE,
+            },
+          );
+
+          // Cek apakah masih ada user yang aktif (misal user 2-4 hari)
+          const [activeUsersResult]: any = await this.postgresProvider.rawQuery(
+            `SELECT COUNT(*)::INT as count, MIN(expired_at) as next_expiry, MIN(created_at) as earliest_start
+             FROM account_user 
+             WHERE account_id = :accountId AND status = 'active'`,
+            {
+              replacements: { accountId },
+              transaction,
+              type: QueryTypes.SELECT,
+            },
+          );
+
+          const remainingActiveUsers = activeUsersResult?.count || 0;
+          if (remainingActiveUsers > 0) {
+            accountUpdateData.batch_start_date = activeUsersResult.earliest_start || new Date();
+            accountUpdateData.batch_end_date = activeUsersResult.next_expiry;
+          } else {
+            accountUpdateData.batch_start_date = null;
+            accountUpdateData.batch_end_date = null;
+          }
+        } else {
+          // Jika status disable / banned / freeze, matikan semua user
+          await this.postgresProvider.rawQuery(
+            'UPDATE account_user SET status = \'expired\', expired_at = :now WHERE account_id = :accountId AND status = \'active\'',
+            {
+              replacements: { accountId, now: new Date() },
+              transaction,
+              type: QueryTypes.UPDATE,
+            },
+          );
+          accountUpdateData.batch_start_date = null;
+          accountUpdateData.batch_end_date = null;
+        }
       }
 
       if (updateAccountDto.status === 'freeze') {
@@ -2392,6 +2417,252 @@ export class AccountService {
     } catch (error) {
       await transaction.rollback();
       throw error;
+    }
+  }
+
+  async getNetflixTokenByBuyer(
+    tenantId: string,
+    query: { buyerName?: string; orderId?: string },
+  ) {
+    const transaction = await this.postgresProvider.transaction();
+    try {
+      await this.postgresProvider.setSchema(tenantId, transaction);
+
+      const buyerName = query.buyerName?.trim();
+      const orderId = query.orderId?.trim();
+
+      if (!buyerName && !orderId) {
+        throw new BadRequestException('buyerName atau orderId harus diisi');
+      }
+
+      const voucherModel = (this.postgresProvider as any).sequelize.models.Voucher;
+      const transactionItemModel = (this.postgresProvider as any).sequelize.models.TransactionItem;
+      const transactionModel = (this.postgresProvider as any).sequelize.models.Transaction;
+
+      let accountId: string | null = null;
+      let expiredAt: Date | null = null;
+      let accessToken: string | null = null;
+      let buyerFoundName = buyerName || '';
+      let productName = '';
+      let foundOrderId: string | null = orderId || null;
+      let orderCreatedAt: Date | null = null;
+      let transactionRecord: any = null;
+
+      // 1. CARI LANGSUNG DI TABEL TRANSACTION (berdasarkan customer = username Shopee, atau orderId)
+      if (transactionModel) {
+        const txOr: any[] = [];
+        if (buyerName) {
+          txOr.push({ customer: { [Op.iLike]: buyerName } });
+        }
+        if (orderId) {
+          txOr.push({ id: orderId });
+        }
+
+        if (txOr.length > 0) {
+          transactionRecord = await transactionModel.findOne({
+            where: { [Op.or]: txOr },
+            order: [['created_at', 'DESC']],
+            include: [
+              {
+                model: transactionItemModel,
+                as: 'items',
+                include: [
+                  {
+                    model: this.accountUserRepository,
+                    as: 'user',
+                    include: [
+                      {
+                        model: this.accountRepository,
+                        as: 'account',
+                        include: [{ model: this.emailRepository, as: 'email' }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            transaction,
+          });
+
+          if (transactionRecord) {
+            foundOrderId = transactionRecord.id;
+            buyerFoundName = transactionRecord.customer || buyerFoundName;
+            orderCreatedAt = transactionRecord.created_at;
+
+            // Cari item yang sudah terikat ke akun pengguna
+            if (transactionRecord.items && transactionRecord.items.length > 0) {
+              const itemWithUser = transactionRecord.items.find(
+                (it: any) => it.user?.account_id || it.user?.account?.id,
+              ) || transactionRecord.items[0];
+
+              productName = itemWithUser?.name || '';
+              const user = itemWithUser?.user;
+              if (user?.account_id || user?.account?.id) {
+                accountId = user.account_id || user.account.id;
+                expiredAt = user.expired_at || null;
+              }
+            }
+
+            // Jika transaksi dibuat via voucher dan belum punya user di items, cek relasi voucher
+            if (!accountId && voucherModel) {
+              const linkedVoucher = await voucherModel.findOne({
+                where: { transaction_id: transactionRecord.id },
+                include: [
+                  {
+                    model: transactionItemModel,
+                    as: 'transaction_item',
+                    include: [
+                      {
+                        model: this.accountUserRepository,
+                        as: 'user',
+                        include: [
+                          {
+                            model: this.accountRepository,
+                            as: 'account',
+                            include: [{ model: this.emailRepository, as: 'email' }],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+                transaction,
+              });
+
+              if (linkedVoucher) {
+                accessToken = linkedVoucher.access_token || null;
+                const vItem = linkedVoucher.transaction_item as any;
+                const vUser = vItem?.user;
+                if (vUser?.account_id || vUser?.account?.id) {
+                  accountId = vUser.account_id || vUser.account.id;
+                  expiredAt = vUser.expired_at || linkedVoucher.expired_at || null;
+                } else if (linkedVoucher.expired_at) {
+                  expiredAt = linkedVoucher.expired_at;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 2. JIKA BELUM DITEMUKAN, CARI DI TABEL VOUCHER (misal buyer kirim kode voucher atau orderId = kode voucher)
+      if (!transactionRecord && voucherModel) {
+        const vOr: any[] = [];
+        if (buyerName) {
+          vOr.push({ buyer_name: { [Op.iLike]: buyerName } });
+        }
+        if (orderId) {
+          vOr.push({ id: orderId });
+          vOr.push({ transaction_id: orderId });
+        }
+
+        if (vOr.length > 0) {
+          const voucher = await voucherModel.findOne({
+            where: { [Op.or]: vOr },
+            order: [['created_at', 'DESC']],
+            include: [
+              {
+                model: transactionItemModel,
+                as: 'transaction_item',
+                include: [
+                  {
+                    model: this.accountUserRepository,
+                    as: 'user',
+                    include: [
+                      {
+                        model: this.accountRepository,
+                        as: 'account',
+                        include: [{ model: this.emailRepository, as: 'email' }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            transaction,
+          });
+
+          if (voucher) {
+            const item = voucher.transaction_item as any;
+            const user = item?.user;
+            accountId = user?.account_id || user?.account?.id || null;
+            expiredAt = user?.expired_at || voucher.expired_at || null;
+            accessToken = voucher.access_token || null;
+            buyerFoundName = voucher.buyer_name || buyerFoundName;
+            productName = item?.name || '';
+            foundOrderId = voucher.id || voucher.transaction_id || foundOrderId;
+            orderCreatedAt = voucher.created_at || null;
+          }
+        }
+      }
+
+      await transaction.commit();
+
+      // Jika data transaksi sama sekali tidak ada di database kita
+      if (!transactionRecord && !accountId && !foundOrderId) {
+        return {
+          found: false,
+          success: false,
+          message: 'Data pesanan/akun pembeli tidak ditemukan di database transaksi kita.',
+        };
+      }
+
+      // Cek apakah masa aktif langganan sudah habis
+      const isExpired = expiredAt ? new Date() > new Date(expiredAt) : false;
+      const hasActiveDuration = expiredAt ? !isExpired : true;
+
+      // Jika expired, kembalikan status durasi habis
+      if (isExpired) {
+        return {
+          found: true,
+          success: false,
+          isExpired: true,
+          hasActiveDuration: false,
+          orderId: foundOrderId,
+          productName,
+          orderDate: orderCreatedAt,
+          expiredAt,
+          buyerName: buyerFoundName,
+          message: `Masa aktif langganan ${productName || 'Netflix'} sudah berakhir pada ${expiredAt ? new Date(expiredAt).toLocaleString('id-ID') : '-'}.`,
+        };
+      }
+
+      // Jika akun Netflix ditemukan dan durasi masih aktif, generate token Netflix
+      let tokenResult: any = null;
+      if (accountId) {
+        try {
+          tokenResult = await this.getNetflixToken(tenantId, accountId);
+        } catch (tokErr: any) {
+          this.logger.warn(`[getNetflixTokenByBuyer] Token generation error: ${tokErr.message}`, 'AccountService');
+        }
+      }
+
+      return {
+        found: true,
+        success: true,
+        isExpired: false,
+        hasActiveDuration,
+        orderId: foundOrderId,
+        productName,
+        orderDate: orderCreatedAt,
+        expiredAt,
+        buyerName: buyerFoundName,
+        token: tokenResult?.token || null,
+        pcLink: tokenResult?.pcLink || null,
+        mobileLink: tokenResult?.mobileLink || null,
+        tvLink: tokenResult?.tvLink || null,
+        generalLink: tokenResult?.generalLink || null,
+        portalLink: accessToken ? `https://volvecapital.com/email-access/${accessToken}` : null,
+      };
+    } catch (error: any) {
+      try {
+        await transaction.rollback();
+      } catch (e) {}
+      this.logger.error(`[getNetflixTokenByBuyer] Error: ${error.message}`, error.stack, 'AccountService');
+      return {
+        success: false,
+        message: `Gagal memproses link Netflix: ${error.message}`,
+      };
     }
   }
 }

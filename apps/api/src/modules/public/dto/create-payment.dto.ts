@@ -20,4 +20,7 @@ export class CreatePaymentDto {
   @IsString()
   @IsOptional()
   promo_code?: string;
+
+  @IsOptional()
+  duration_multiplier?: number;
 }

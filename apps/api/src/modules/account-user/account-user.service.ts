@@ -66,14 +66,19 @@ export class AccountUserService {
 
   private async syncAccountBatchEndDate(accountId: string, transaction: DbTransaction) {
     const query = `
-      WITH max_expiry AS (
-        SELECT MAX(au.expired_at) as max_expired_at
-        FROM account_user au
-        JOIN account_profile ap ON ap.id = au.account_profile_id
-        WHERE ap.account_id = :accountId AND au.status = 'active'
-      )
       UPDATE account a
-      SET batch_end_date = (SELECT max_expired_at FROM max_expiry)
+      SET batch_end_date = LEAST(
+            COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+            COALESCE(
+              (
+                SELECT MIN(au.expired_at)
+                FROM account_user au
+                JOIN account_profile ap ON ap.id = au.account_profile_id
+                WHERE ap.account_id = :accountId AND au.status = 'active'
+              ),
+              'infinity'::timestamptz
+            )
+          )
       WHERE a.id = :accountId;
     `;
 

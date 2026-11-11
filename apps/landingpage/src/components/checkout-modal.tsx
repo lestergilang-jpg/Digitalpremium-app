@@ -9,6 +9,7 @@ import { QrisModal } from './qris-modal'
 import { toast } from 'sonner'
 import { formatCurrency } from '@/lib/format'
 import { useNotification } from '@/hooks/use-notification'
+import { cn } from '@/lib/utils'
 
 declare global {
   interface Window {
@@ -36,7 +37,16 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
   const [promoError, setPromoError] = useState('')
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [qrisData, setQrisData] = useState<{ isOpen: boolean; qrString: string; orderId: string; amount: number; productName: string } | null>(null)
+  const [durationMultiplier, setDurationMultiplier] = useState(1)
   const { addNotification } = useNotification()
+
+  const isDailyVariant = Boolean(
+    variant?.name?.toLowerCase().includes('harian') ||
+    (variant?.duration ? Number(variant.duration) <= 24 * 60 * 60 * 1000 : false)
+  );
+  const currentMultiplier = isDailyVariant ? durationMultiplier : 1;
+  const rawSubtotal = (variant?.price || 0) * currentMultiplier;
+  const finalAmount = Math.max(0, rawSubtotal - (promoData?.discount_amount || 0));
   
   // Handle initial data population and local storage
   useEffect(() => {
@@ -73,6 +83,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
       setPromoCode('')
       setPromoData(null)
       setPromoError('')
+      setDurationMultiplier(1)
       setStep(1)
     }
   }, [variant?.id, isOpen, initialData])
@@ -136,7 +147,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
     try {
       const { data } = await api.post('/public/promo/validate', {
         code: promoCode,
-        total_purchase: variant.price,
+        total_purchase: rawSubtotal,
         product_variant_id: variant.id
       })
       setPromoData(data)
@@ -174,12 +185,17 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
     const finalPromoCode = (promoData && promoCode) ? promoCode : undefined;
 
     try {
+      const displayName = currentMultiplier > 1 
+        ? `${product.name} - ${variant.name} (${currentMultiplier} Hari)`
+        : `${product.name} - ${variant.name}`;
+
       const { data } = await api.post(`/public/payment/create?t=${Date.now()}`, {
         product_variant_id: finalVariantId,
         buyer_name: formData.name,
         buyer_email: formData.email,
         buyer_whatsapp: formData.whatsapp,
-        promo_code: finalPromoCode
+        promo_code: finalPromoCode,
+        duration_multiplier: currentMultiplier,
       })
 
       if (data.qris_string) {
@@ -187,25 +203,26 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
           isOpen: true,
           qrString: data.qris_string,
           orderId: data.order_id,
-          amount: (variant.price || 0) - (promoData?.discount_amount || 0),
-          productName: `${product.name} - ${variant.name}`
+          amount: finalAmount,
+          productName: displayName
         });
         setIsLoading(false);
       } else if (data.payment_url) {
         addNotification({
           type: 'pending',
           title: 'Pembayaran Tertunda',
-          message: `Segera selesaikan pembayaran untuk ${product.name} (${variant.name})`,
+          message: `Segera selesaikan pembayaran untuk ${displayName}`,
           data: {
             orderId: data.order_id, 
             productId: product.id,
             variantId: variant.id,
             productName: product.name,
-            variantName: variant.name,
-            price: (variant.price || 0) - (promoData?.discount_amount || 0),
+            variantName: currentMultiplier > 1 ? `${variant.name} (${currentMultiplier} Hari)` : variant.name,
+            price: finalAmount,
             paymentUrl: data.payment_url,
             formData: formData,
-            promoCode: finalPromoCode
+            promoCode: finalPromoCode,
+            durationMultiplier: currentMultiplier,
           }
         });
 
@@ -356,10 +373,46 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
                             </div>
                           </div>
 
+                          {isDailyVariant && (
+                            <div className="bg-background rounded-xl p-4 border border-border shadow-sm mb-6 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Durasi Sewa</span>
+                                <span className="text-xs font-black text-primary px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20">
+                                  {durationMultiplier} Hari
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                {[1, 2, 3].map((days) => (
+                                  <button
+                                    key={days}
+                                    type="button"
+                                    onClick={() => {
+                                      setDurationMultiplier(days);
+                                      if (promoData) setPromoData(null);
+                                    }}
+                                    className={cn(
+                                      "py-2.5 rounded-xl font-black text-xs transition-all border",
+                                      durationMultiplier === days
+                                        ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20 scale-[1.02]"
+                                        : "bg-muted/40 text-foreground border-border hover:border-primary/40"
+                                    )}
+                                  >
+                                    {days} Hari
+                                  </button>
+                                ))}
+                              </div>
+                              {durationMultiplier > 1 && (
+                                <p className="text-[11px] text-muted-foreground leading-relaxed pt-2 border-t border-border/50">
+                                  Password akun di-reset per 24 jam. Jika ter-logout di Netflix, buka link voucher Anda untuk menyalin password terbaru.
+                                </p>
+                              )}
+                            </div>
+                          )}
+
                           <div className="space-y-4 flex-grow">
                             <div className="flex justify-between text-base font-medium text-muted-foreground">
-                              <span>Harga Paket</span>
-                              <span className="text-foreground">{formatCurrency(variant?.price || 0)}</span>
+                              <span>Harga Paket {isDailyVariant && durationMultiplier > 1 ? `(${durationMultiplier} Hari)` : ''}</span>
+                              <span className="text-foreground">{formatCurrency(rawSubtotal)}</span>
                             </div>
                             <div className="flex justify-between text-base font-medium text-muted-foreground">
                               <span>Biaya Admin</span>
@@ -403,7 +456,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
                               <div className="flex justify-between items-center py-2">
                                 <span className="text-lg font-medium text-slate-400">Total Bayar</span>
                                 <span className="text-3xl font-bold text-primary tracking-tight">
-                                  {formatCurrency((variant?.price || 0) - (promoData?.discount_amount || 0))}
+                                  {formatCurrency(finalAmount)}
                                 </span>
                               </div>
                             </div>
@@ -445,7 +498,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
                     <div className="w-full max-w-sm bg-muted/30 border border-border rounded-2xl p-6 space-y-2">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Tagihan</p>
                       <p className="text-3xl font-black text-foreground tracking-tighter">
-                        {formatCurrency((variant?.price || 0) - (promoData?.discount_amount || 0))}
+                        {formatCurrency(finalAmount)}
                       </p>
                     </div>
 

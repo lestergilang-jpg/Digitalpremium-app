@@ -11,7 +11,8 @@ import * as https from 'https';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as nodemailer from 'nodemailer';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
+import { NETFLIX_RESET_PASSWORD } from 'src/constants/task.const';
 import {
   ACCOUNT_PROFILE_REPOSITORY,
   ACCOUNT_REPOSITORY,
@@ -390,9 +391,17 @@ export class PublicService {
         throw new ServiceUnavailableException(`Stok untuk ${fullVariantName} habis silahkan hubungi admin untuk restock`);
       }
 
+      // Ensure duration_multiplier column exists on voucher table
+      await this.postgresProvider.rawQuery(
+        'ALTER TABLE voucher ADD COLUMN IF NOT EXISTS duration_multiplier INTEGER DEFAULT 1;',
+        { transaction },
+      ).catch(() => {});
+
       // 3. Create order record (Payment Status: PENDING)
+      const multiplier = Math.max(1, Math.min(3, Math.floor(Number(dto.duration_multiplier) || 1)));
       const orderId = `INV-${tenantId.toUpperCase()}-${Date.now()}`;
-      let grossAmount = variant.price;
+      const basePrice = Number(variant.price || 0);
+      let grossAmount = basePrice * multiplier;
       let discountAmount = 0;
       let promoCodeId: string | null = null;
 
@@ -455,9 +464,13 @@ export class PublicService {
       );
 
       // 5. Create transaction item
+      const variantDisplayName = multiplier > 1
+        ? `${(variant as any).product?.name ?? 'Produk'} - ${variant.name} (${multiplier} Hari)`
+        : `${(variant as any).product?.name ?? 'Produk'} - ${variant.name}`;
+
       const txnItem = await this.transactionItemRepository.create(
         {
-          name: `${(variant as any).product?.name ?? 'Produk'} - ${variant.name}`,
+          name: variantDisplayName,
           transaction_id: txn.id,
         },
         { transaction },
@@ -483,6 +496,7 @@ export class PublicService {
           expired_at: voucherExpiry,
           promo_code_id: promoCodeId,
           discount_amount: discountAmount,
+          duration_multiplier: multiplier,
         },
         { transaction },
       );
@@ -492,7 +506,7 @@ export class PublicService {
         dto.buyer_email,
         dto.buyer_name,
         paymentUrl, 
-        `${(variant as any).product?.name ?? 'Produk'} - ${variant.name}`,
+        variantDisplayName,
         grossAmount,
       ).catch((err) => {
         this.logger.error(`[CreatePayment] Failed to send invoice email: ${err.message}`);
@@ -855,7 +869,10 @@ export class PublicService {
       await dbTransaction.commit();
 
       if (shouldSendEmail) {
-        const productName = `${(voucher.product_variant as any)?.product?.name ?? 'Produk'} - ${voucher.product_variant?.name ?? ''}`;
+        const multiplier = (voucher as any).duration_multiplier ? Number((voucher as any).duration_multiplier) : 1;
+        const productName = multiplier > 1
+          ? `${(voucher.product_variant as any)?.product?.name ?? 'Produk'} - ${voucher.product_variant?.name ?? ''} (${multiplier} Hari)`
+          : `${(voucher.product_variant as any)?.product?.name ?? 'Produk'} - ${voucher.product_variant?.name ?? ''}`;
         
         // Kirim WhatsApp (non-blocking)
         if (voucher.buyer_whatsapp) {
@@ -1088,7 +1105,15 @@ export class PublicService {
       const variant = voucher.product_variant;
       if (!variant) throw new NotFoundException('Varian produk tidak ditemukan');
 
-      // 2. Find available account & profile slot
+      // 2. Calculate duration & target expiry
+      const multiplier = Math.max(1, Math.min(3, Math.floor(Number((voucher as any).duration_multiplier) || 1)));
+      const baseDurationMs = Number(variant.duration) || (24 * 60 * 60 * 1000);
+      const totalDurationMs = baseDurationMs * multiplier;
+      const expiredAt = new Date(Date.now() + totalDurationMs);
+
+      // 3. Find available account & profile slot
+      //    Prioritas 1: Akun yang subscription_expiry >= expiredAt (masa aktif akun aman selama durasi pesanan)
+      //    Prioritas 2 (Fallback): Akun aktif lainnya jika tidak ada yang memenuhi prioritas 1
       const accounts = await this.accountRepository.findAll({
         where: {
           product_variant_id: voucher.product_variant_id,
@@ -1114,23 +1139,45 @@ export class PublicService {
       let chosenAccount: Account | null = null;
       let chosenProfile: AccountProfile | null = null;
 
-      for (const account of accounts) {
-        const profiles: AccountProfile[] = (account as any).profile ?? [];
-        for (const profile of profiles) {
-          const activeUsers = await this.accountUserRepository.count({
-            where: {
-              account_profile_id: profile.id,
-              status: 'active',
-            },
-            transaction,
-          });
-          if (activeUsers < profile.max_user) {
-            chosenAccount = account;
-            chosenProfile = profile;
-            break;
+      // Fungsi helper untuk mencari slot yang tersedia di kumpulan akun
+      const findSlotInAccounts = async (accList: Account[]) => {
+        for (const account of accList) {
+          const profiles: AccountProfile[] = (account as any).profile ?? [];
+          for (const profile of profiles) {
+            const activeUsers = await this.accountUserRepository.count({
+              where: {
+                account_profile_id: profile.id,
+                status: 'active',
+              },
+              transaction,
+            });
+            if (activeUsers < profile.max_user) {
+              return { account, profile };
+            }
           }
         }
-        if (chosenProfile) break;
+        return null;
+      };
+
+      if (multiplier > 1) {
+        // Prioritaskan akun yang subscription_expiry nya masih cukup untuk seluruh hari yang dibeli
+        const safeAccounts = accounts.filter(
+          (acc) => acc.subscription_expiry && new Date(acc.subscription_expiry) >= expiredAt,
+        );
+        const safeSlot = await findSlotInAccounts(safeAccounts);
+        if (safeSlot) {
+          chosenAccount = safeSlot.account;
+          chosenProfile = safeSlot.profile;
+        }
+      }
+
+      // Jika belum dapat (atau untuk multiplier = 1), ambil dari akun yang tersedia
+      if (!chosenAccount || !chosenProfile) {
+        const anySlot = await findSlotInAccounts(accounts);
+        if (anySlot) {
+          chosenAccount = anySlot.account;
+          chosenProfile = anySlot.profile;
+        }
       }
 
       if (!chosenAccount || !chosenProfile) {
@@ -1139,10 +1186,7 @@ export class PublicService {
         );
       }
 
-      // 4. Insert account_user
-      const expiredAt = new Date(
-        Date.now() + Number(variant.duration),
-      );
+      // 4. Insert account_user with multiplied duration
 
       const newUser = await this.accountUserRepository.create(
         {
@@ -1179,7 +1223,65 @@ export class PublicService {
         }
       }
 
+      // 7. Sync account batch_start_date & batch_end_date
+      //    Cap by subscription_expiry so multi-day users never push reset beyond daily cycle
+      await this.postgresProvider.rawQuery(
+        `UPDATE account a
+         SET batch_end_date = LEAST(
+               COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+               COALESCE(
+                 (
+                   SELECT MIN(au.expired_at)
+                   FROM account_user au
+                   JOIN account_profile ap ON ap.id = au.account_profile_id
+                   WHERE ap.account_id = :accountId AND au.status = 'active'
+                 ),
+                 'infinity'::timestamptz
+               )
+             ),
+             batch_start_date = COALESCE(a.batch_start_date, NOW()),
+             status = 'active'
+         WHERE a.id = :accountId`,
+        {
+          replacements: { accountId: chosenAccount.id },
+          transaction,
+          type: QueryTypes.UPDATE,
+        },
+      );
+
       await transaction.commit();
+
+      // Register or update automated Netflix reset task in background if applicable
+      const productName = (variant as any).product?.name?.toLowerCase() || '';
+      if (productName.includes('netflix')) {
+        this.accountRepository.findOne({
+          where: { id: chosenAccount.id },
+          include: [{ model: Email, as: 'email' }, { model: ProductVariant, as: 'product_variant' }],
+        }).then(updatedAcc => {
+          if (updatedAcc && updatedAcc.batch_end_date) {
+            this.taskQueueService.upsert([{
+              context: NETFLIX_RESET_PASSWORD,
+              execute_at: updatedAcc.batch_end_date,
+              subject_id: updatedAcc.id,
+              tenant_id: tenantId,
+              status: 'QUEUED',
+              payload: JSON.stringify({
+                id: updatedAcc.id,
+                accountId: updatedAcc.id,
+                email: (updatedAcc as any).email?.email || '',
+                password: updatedAcc.account_password,
+                newPassword: '',
+                subscription_expiry: updatedAcc.subscription_expiry?.toISOString() || '',
+                variant_name: variant.name || '',
+              }),
+            }]).catch(err => {
+              this.logger.error(`Failed to register reset task for account ${chosenAccount.id}: ${err.message}`);
+            });
+          }
+        }).catch(err => {
+          this.logger.error(`Failed to fetch account for task registration: ${err.message}`);
+        });
+      }
 
       return {
         message: 'Voucher berhasil diredeem!',

@@ -31,6 +31,7 @@ export interface VoucherAttributes {
   payment_status: PaymentStatus;
   promo_code_id?: string | null;
   discount_amount?: number | null;
+  duration_multiplier?: number;
   product_variant?: ProductVariantAttributes;
   transaction?: TransactionAttributes;
   used_at?: Date | null;
@@ -52,6 +53,7 @@ interface VoucherCreationAttributes
     | 'transaction_id'
     | 'transaction_item_id'
     | 'payment_id'
+    | 'duration_multiplier'
     | 'product_variant'
     | 'transaction'
     | 'used_at'
@@ -140,4 +142,10 @@ export class Voucher extends Model<VoucherAttributes, VoucherCreationAttributes>
     },
   })
   declare discount_amount?: number | null;
+
+  @Column({
+    type: DataType.INTEGER,
+    defaultValue: 1,
+  })
+  declare duration_multiplier: number;
 }

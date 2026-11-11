@@ -133,6 +133,11 @@ export default function RedeemPage() {
                     <h4 className="text-3xl md:text-4xl font-black text-foreground tracking-tight">{result?.voucher?.product_variant?.product?.name || 'Produk'}</h4>
                     <div className="flex items-center gap-3 mt-3">
                       <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">{result?.voucher?.product_variant?.name || 'Varian'}</span>
+                      {result?.voucher?.duration_multiplier > 1 && (
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase bg-primary/10 text-primary border border-primary/20">
+                          {result.voucher.duration_multiplier} Hari
+                        </span>
+                      )}
                       <span className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-[0.2em] uppercase ${
                         result.voucher.status === 'USED' 
                         ? 'bg-destructive/10 text-destructive border border-destructive/20' 
@@ -207,6 +212,27 @@ export default function RedeemPage() {
 
                   return (
                     <div className="space-y-10">
+                      {result?.voucher?.product_variant?.product?.name?.toLowerCase().includes('netflix') && (
+                        <div className="p-4 bg-muted/40 border border-border rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="bg-primary/10 p-2 rounded-xl shrink-0">
+                              <Sparkles className="size-4 text-primary" />
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              Password akun diperbarui otomatis setiap 24 jam demi keamanan sistem sharing. Jika sewaktu-waktu ter-logout di Netflix, klik tombol di sebelah kanan untuk menyalin password terbaru.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleSearch()}
+                            disabled={isLoading}
+                            className="text-xs font-bold text-primary hover:text-primary/80 transition-colors flex items-center gap-1.5 shrink-0 px-3.5 py-2 rounded-xl border border-primary/20 hover:bg-primary/5 active:scale-95"
+                          >
+                            <Loader2 className={cn("size-3.5", isLoading && "animate-spin")} />
+                            Cek Password Baru
+                          </button>
+                        </div>
+                      )}
                       {result?.voucher?.product_variant?.product?.name?.toLowerCase().includes('netflix') && accessToken && (
                         <NetflixLoginGuide token={accessToken} email={result.account.email} />
                       )}

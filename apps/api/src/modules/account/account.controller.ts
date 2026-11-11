@@ -78,6 +78,15 @@ export class AccountController {
     return this.accountService.getFinancialDetails(request.tenant_id!, id);
   }
 
+  @Post('duoke/netflix-token')
+  @RequirePermissions('account.view')
+  getNetflixTokenByBuyer(
+    @Body() body: { buyerName?: string; orderId?: string },
+    @Request() request: AppRequest,
+  ) {
+    return this.accountService.getNetflixTokenByBuyer(request.tenant_id!, body);
+  }
+
   @Get(':id/netflix-token')
   @RequirePermissions('account.view')
   getNetflixToken(@Param('id') id: string, @Request() request: AppRequest) {
