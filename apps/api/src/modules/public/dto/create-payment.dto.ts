@@ -23,4 +23,7 @@ export class CreatePaymentDto {
 
   @IsOptional()
   duration_multiplier?: number;
+
+  @IsOptional()
+  quantity?: number;
 }

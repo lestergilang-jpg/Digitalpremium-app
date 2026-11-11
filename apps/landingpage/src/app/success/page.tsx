@@ -27,6 +27,8 @@ function SuccessContent() {
 
   const searchParams = useSearchParams()
   const [code, setCode] = useState<string | null>(searchParams.get('voucher') || searchParams.get('code'))
+  const [voucherCodes, setVoucherCodes] = useState<string[]>([])
+  const [buyerWhatsapp, setBuyerWhatsapp] = useState<string | null>(null)
   const orderId = searchParams.get('order_id')
   const [voucherData, setVoucherData] = useState<any>(null)
   const [isChecking, setIsChecking] = useState(false)
@@ -43,7 +45,10 @@ function SuccessContent() {
         try {
           const res = await api.get(`/public/payment/status/${orderId}`)
           if (res.data.payment_status === 'PAID') {
-            setCode(res.data.voucher_code)
+            const codes: string[] = res.data.voucher_codes || (res.data.voucher_code ? [res.data.voucher_code] : [])
+            setVoucherCodes(codes)
+            setCode(codes[0] || res.data.voucher_code)
+            if (res.data.buyer_whatsapp) setBuyerWhatsapp(res.data.buyer_whatsapp)
             setIsChecking(false)
             return true
           }
@@ -79,6 +84,9 @@ function SuccessContent() {
         .then(res => {
           const voucher = res.data.voucher
           setVoucherData(voucher)
+          if (voucher?.buyer_whatsapp) {
+            setBuyerWhatsapp(voucher.buyer_whatsapp)
+          }
           
           // 1. Bersihkan dulu notifikasi pending yang berkaitan
           const targetOrderId = orderId || voucher.payment_id;
@@ -118,15 +126,9 @@ function SuccessContent() {
     try {
       await api.post('/public/voucher/redeem', { voucher_code: code })
       markVoucherAsClaimed(code)
-      toast.success('Voucher berhasil diklaim! Mengalihkan ke halaman akun...')
-      // Refresh voucher data to get access_token, then redirect
-      const res = await api.get(`/public/voucher/${code}`)
-      const accessToken = res.data?.voucher?.access_token
-      if (accessToken) {
-        window.location.href = `/redeem?code=${code}`
-      } else {
-        window.location.href = `/redeem?code=${code}`
-      }
+      toast.success('Voucher berhasil diklaim! Membuka halaman akun...')
+      // Open redeem page in a new tab
+      window.open(`/redeem?code=${code}`, '_blank')
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Gagal mengklaim voucher. Coba gunakan halaman Redeem.')
       setIsClaiming(false)
@@ -156,22 +158,79 @@ function SuccessContent() {
 
           {/* Voucher Code Section */}
           <div className="flex flex-col items-center justify-center mb-6">
-            <p className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-2">Kode Voucher</p>
-            <div className="flex items-center gap-3 mb-6">
-              <span className="text-2xl md:text-3xl font-black text-primary tracking-tight">
-                {code || (isChecking ? 'MENGECEK...' : 'VC-XXXXXXXX')}
-              </span>
-              <button 
-                onClick={copyCode}
-                className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all duration-300 active:scale-95 flex items-center justify-center"
-                title="Salin Voucher"
-              >
-                <Copy className="size-5" />
-              </button>
-            </div>
+            <p className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-3">
+              {voucherCodes.length > 1 ? `Daftar Kode Voucher (${voucherCodes.length} Akun)` : 'Kode Voucher'}
+            </p>
+
+            {voucherCodes.length > 1 ? (
+              <>
+                <div className="w-full space-y-3 mb-6">
+                  {voucherCodes.map((vCode, idx) => (
+                    <div
+                      key={vCode}
+                      className="flex items-center justify-between p-3.5 bg-muted/40 rounded-2xl border border-border"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-primary/10 text-primary">
+                          Akun #{idx + 1}
+                        </span>
+                        <span className="text-lg md:text-xl font-black text-primary tracking-tight">
+                          {vCode}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(vCode)
+                            toast.success(`Kode voucher #${idx + 1} disalin!`)
+                          }}
+                          className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all duration-300 active:scale-95 flex items-center justify-center"
+                          title="Salin Voucher"
+                        >
+                          <Copy className="size-4" />
+                        </button>
+                        <a
+                          href={`/redeem?code=${vCode}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl text-xs flex items-center gap-1 shadow-sm transition-all"
+                        >
+                          <Zap className="size-3" /> Klaim
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Klaim Semua button — opens history page in new tab, pre-filled with buyer phone */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetUrl = buyerWhatsapp ? `/history?identifier=${encodeURIComponent(buyerWhatsapp)}` : '/history'
+                    window.open(targetUrl, '_blank')
+                  }}
+                  className="w-full mb-6 px-4 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-2xl text-sm flex items-center justify-center gap-2 transition-all duration-300 shadow-md active:scale-95"
+                >
+                  <ArrowRight className="size-4" /> Klaim Semua Akun di Riwayat
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-3 mb-6">
+                <span className="text-2xl md:text-3xl font-black text-primary tracking-tight">
+                  {code || (isChecking ? 'MENGECEK...' : 'VC-XXXXXXXX')}
+                </span>
+                <button 
+                  onClick={copyCode}
+                  className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all duration-300 active:scale-95 flex items-center justify-center"
+                  title="Salin Voucher"
+                >
+                  <Copy className="size-5" />
+                </button>
+              </div>
+            )}
             
-            {/* Primary: Claim directly from this page */}
-            {code && voucherData?.status === 'UNUSED' && (
+            {/* Primary: Claim directly from this page for single voucher */}
+            {voucherCodes.length <= 1 && code && voucherData?.status === 'UNUSED' && (
               <button
                 onClick={handleClaim}
                 disabled={isClaiming}

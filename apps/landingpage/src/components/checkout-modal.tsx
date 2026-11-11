@@ -38,6 +38,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [qrisData, setQrisData] = useState<{ isOpen: boolean; qrString: string; orderId: string; amount: number; productName: string } | null>(null)
   const [durationMultiplier, setDurationMultiplier] = useState(1)
+  const [quantity, setQuantity] = useState(1)
   const { addNotification } = useNotification()
 
   const isDailyVariant = Boolean(
@@ -45,7 +46,8 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
     (variant?.duration ? Number(variant.duration) <= 24 * 60 * 60 * 1000 : false)
   );
   const currentMultiplier = isDailyVariant ? durationMultiplier : 1;
-  const rawSubtotal = (variant?.price || 0) * currentMultiplier;
+  const currentQuantity = Math.max(1, Math.min(5, quantity));
+  const rawSubtotal = (variant?.price || 0) * currentMultiplier * currentQuantity;
   const finalAmount = Math.max(0, rawSubtotal - (promoData?.discount_amount || 0));
   
   // Handle initial data population and local storage
@@ -185,9 +187,9 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
     const finalPromoCode = (promoData && promoCode) ? promoCode : undefined;
 
     try {
-      const displayName = currentMultiplier > 1 
-        ? `${product.name} - ${variant.name} (${currentMultiplier} Hari)`
-        : `${product.name} - ${variant.name}`;
+      let displayName = `${product.name} - ${variant.name}`;
+      if (currentMultiplier > 1) displayName += ` (${currentMultiplier} Hari)`;
+      if (currentQuantity > 1) displayName += ` x${currentQuantity} Akun`;
 
       const { data } = await api.post(`/public/payment/create?t=${Date.now()}`, {
         product_variant_id: finalVariantId,
@@ -196,6 +198,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
         buyer_whatsapp: formData.whatsapp,
         promo_code: finalPromoCode,
         duration_multiplier: currentMultiplier,
+        quantity: currentQuantity,
       })
 
       if (data.qris_string) {
@@ -374,7 +377,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
                           </div>
 
                           {isDailyVariant && (
-                            <div className="bg-background rounded-xl p-4 border border-border shadow-sm mb-6 space-y-3">
+                            <div className="bg-background rounded-xl p-4 border border-border shadow-sm mb-4 space-y-3">
                               <div className="flex items-center justify-between">
                                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Durasi Sewa</span>
                                 <span className="text-xs font-black text-primary px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20">
@@ -409,9 +412,46 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
                             </div>
                           )}
 
+                          {/* JUMLAH AKUN (QUANTITY) */}
+                          <div className="bg-background rounded-xl p-4 border border-border shadow-sm mb-6 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Jumlah Akun</span>
+                                <span className="text-[10px] text-muted-foreground font-medium">Email akun dipastikan berbeda</span>
+                              </div>
+                              <span className="text-xs font-black text-primary px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20">
+                                {quantity} Akun
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-5 gap-1.5">
+                              {[1, 2, 3, 4, 5].map((qty) => (
+                                <button
+                                  key={qty}
+                                  type="button"
+                                  onClick={() => {
+                                    setQuantity(qty);
+                                    if (promoData) setPromoData(null);
+                                  }}
+                                  className={cn(
+                                    "py-2 rounded-xl font-black text-xs transition-all border",
+                                    quantity === qty
+                                      ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20 scale-[1.02]"
+                                      : "bg-muted/40 text-foreground border-border hover:border-primary/40"
+                                  )}
+                                >
+                                  {qty}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
                           <div className="space-y-4 flex-grow">
                             <div className="flex justify-between text-base font-medium text-muted-foreground">
-                              <span>Harga Paket {isDailyVariant && durationMultiplier > 1 ? `(${durationMultiplier} Hari)` : ''}</span>
+                              <span>
+                                Harga Paket
+                                {isDailyVariant && durationMultiplier > 1 ? ` (${durationMultiplier} Hari)` : ''}
+                                {quantity > 1 ? ` x${quantity}` : ''}
+                              </span>
                               <span className="text-foreground">{formatCurrency(rawSubtotal)}</span>
                             </div>
                             <div className="flex justify-between text-base font-medium text-muted-foreground">

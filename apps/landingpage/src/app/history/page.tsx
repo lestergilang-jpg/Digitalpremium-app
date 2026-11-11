@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Copy, Key, BookOpen, Mail, User, Clock, Hash, Loader2, Calendar, ShoppingBag, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -13,7 +14,7 @@ import { NetflixLoginGuide } from '@/components/netflix-login-guide'
 import Link from 'next/link'
 import { useTenant } from '@/hooks/use-tenant'
 
-export default function HistoryPage() {
+function HistoryContent() {
   const [identifier, setIdentifier] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [purchases, setPurchases] = useState<any[]>([])
@@ -21,23 +22,19 @@ export default function HistoryPage() {
   const [copied, setCopied] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const { tenantId } = useTenant()
+  const searchParams = useSearchParams()
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!identifier.trim()) {
-      toast.error('Masukkan email atau nomor WhatsApp terlebih dahulu')
-      return
-    }
-
+  const doSearch = useCallback(async (id: string) => {
+    if (!id.trim()) return
     setIsLoading(true)
     setHasSearched(true)
     try {
       const { data } = await api.get(`/public/purchases`, {
-        params: { identifier: identifier.trim() }
+        params: { identifier: id.trim() }
       })
       setPurchases(data || [])
       if (data && data.length > 0) {
-        setExpandedId(data[0].id) // Expand the first transaction by default
+        setExpandedId(data[0].id)
       }
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Gagal mencari riwayat pembelian')
@@ -45,6 +42,24 @@ export default function HistoryPage() {
     } finally {
       setIsLoading(false)
     }
+  }, [])
+
+  // Auto-fill identifier from URL ?identifier= query param and trigger search
+  useEffect(() => {
+    const param = searchParams.get('identifier')
+    if (param && param.trim()) {
+      setIdentifier(param.trim())
+      doSearch(param.trim())
+    }
+  }, [searchParams, doSearch])
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!identifier.trim()) {
+      toast.error('Masukkan email atau nomor WhatsApp terlebih dahulu')
+      return
+    }
+    doSearch(identifier)
   }
 
   const copyToClipboard = (text: string) => {
@@ -368,12 +383,14 @@ export default function HistoryPage() {
                                 </p>
                                 
                                 {!purchase.is_expired && purchase.status === 'UNUSED' && (
-                                  <Link
+                                  <a
                                     href={`/redeem?code=${purchase.id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                     className="mt-6 inline-flex items-center gap-2 px-6 py-2.5 bg-primary text-primary-foreground font-bold rounded-xl hover:bg-primary/90 transition-all text-xs uppercase tracking-wider shadow-md"
                                   >
                                     Claim Voucher Sekarang
-                                  </Link>
+                                  </a>
                                 )}
                               </div>
                             )}
@@ -392,5 +409,17 @@ export default function HistoryPage() {
 
       <Footer />
     </main>
+  )
+}
+
+export default function HistoryPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="size-12 text-primary animate-spin" />
+      </div>
+    }>
+      <HistoryContent />
+    </Suspense>
   )
 }

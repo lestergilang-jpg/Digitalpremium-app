@@ -386,9 +386,16 @@ export class PublicService {
       // 2. Check stock
       const stockStatus = await this.getStockStatus(tenantId);
       const variantStock = stockStatus.find(s => s.product_variant_id === variant.id);
-      if (!variantStock || variantStock.stock <= 0) {
+      const quantity = Math.max(1, Math.min(5, Math.floor(Number(dto.quantity) || 1)));
+
+      if (!variantStock || variantStock.stock < quantity) {
         const fullVariantName = (variant as any).product?.name ? `${(variant as any).product.name} ${variant.name}` : variant.name;
-        throw new ServiceUnavailableException(`Stok untuk ${fullVariantName} habis silahkan hubungi admin untuk restock`);
+        const availableStock = variantStock?.stock || 0;
+        throw new ServiceUnavailableException(
+          availableStock <= 0
+            ? `Stok untuk ${fullVariantName} habis, silakan hubungi admin untuk restock.`
+            : `Stok untuk ${fullVariantName} hanya tersisa ${availableStock} akun, tidak mencukupi untuk pemesanan ${quantity} akun.`,
+        );
       }
 
       // Ensure duration_multiplier column exists on voucher table
@@ -401,7 +408,7 @@ export class PublicService {
       const multiplier = Math.max(1, Math.min(3, Math.floor(Number(dto.duration_multiplier) || 1)));
       const orderId = `INV-${tenantId.toUpperCase()}-${Date.now()}`;
       const basePrice = Number(variant.price || 0);
-      let grossAmount = basePrice * multiplier;
+      let grossAmount = basePrice * multiplier * quantity;
       let discountAmount = 0;
       let promoCodeId: string | null = null;
 
@@ -463,50 +470,63 @@ export class PublicService {
         { transaction },
       );
 
-      // 5. Create transaction item
-      const variantDisplayName = multiplier > 1
-        ? `${(variant as any).product?.name ?? 'Produk'} - ${variant.name} (${multiplier} Hari)`
-        : `${(variant as any).product?.name ?? 'Produk'} - ${variant.name}`;
-
-      const txnItem = await this.transactionItemRepository.create(
-        {
-          name: variantDisplayName,
-          transaction_id: txn.id,
-        },
-        { transaction },
-      );
-
-      // 6. Create voucher record (PENDING)
+      // 5 & 6. Create transaction item(s) and voucher record(s) (PENDING)
       // Expiration: 24 hours from now
       const voucherExpiry = new Date();
       voucherExpiry.setHours(voucherExpiry.getHours() + 24);
 
-      await this.voucherRepository.create(
-        {
-          id: `VC-${Date.now().toString(36).toUpperCase()}`, 
-          buyer_name: dto.buyer_name,
-          buyer_email: dto.buyer_email,
-          buyer_whatsapp: dto.buyer_whatsapp,
-          product_variant_id: variant.id,
-          payment_id: orderId,
-          transaction_id: txn.id,
-          transaction_item_id: txnItem.id,
-          payment_status: 'PENDING',
-          status: 'PENDING',
-          expired_at: voucherExpiry,
-          promo_code_id: promoCodeId,
-          discount_amount: discountAmount,
-          duration_multiplier: multiplier,
-        },
-        { transaction },
-      );
+      let baseVariantDisplayName = (variant as any).product?.name ?? 'Produk';
+      if (variant.name) baseVariantDisplayName += ` - ${variant.name}`;
+      if (multiplier > 1) baseVariantDisplayName += ` (${multiplier} Hari)`;
+
+      for (let i = 0; i < quantity; i++) {
+        // Setiap voucher memiliki TransactionItem masing-masing agar alokasi akun & profil tidak tertimpa satu sama lain
+        const itemDisplayName = quantity > 1
+          ? `${baseVariantDisplayName} (Akun #${i + 1})`
+          : baseVariantDisplayName;
+
+        const txnItem = await this.transactionItemRepository.create(
+          {
+            name: itemDisplayName,
+            transaction_id: txn.id,
+          },
+          { transaction },
+        );
+
+        // Format voucher: 'VC-' (3 char) + 8 char hex random = 11 chars (max 12 chars in DB)
+        const randomCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+        const voucherId = `VC-${randomCode}`;
+
+        await this.voucherRepository.create(
+          {
+            id: voucherId,
+            buyer_name: dto.buyer_name,
+            buyer_email: dto.buyer_email,
+            buyer_whatsapp: dto.buyer_whatsapp,
+            product_variant_id: variant.id,
+            payment_id: orderId,
+            transaction_id: txn.id,
+            transaction_item_id: txnItem.id,
+            payment_status: 'PENDING',
+            status: 'PENDING',
+            expired_at: voucherExpiry,
+            promo_code_id: promoCodeId,
+            discount_amount: discountAmount,
+            duration_multiplier: multiplier,
+          },
+          { transaction },
+        );
+      }
+
+      let emailVariantDisplayName = baseVariantDisplayName;
+      if (quantity > 1) emailVariantDisplayName += ` (${quantity} Akun)`;
 
       // 7. Send invoice email (non-blocking)
       this.sendInvoiceEmail(
         dto.buyer_email,
         dto.buyer_name,
         paymentUrl, 
-        variantDisplayName,
+        emailVariantDisplayName,
         grossAmount,
       ).catch((err) => {
         this.logger.error(`[CreatePayment] Failed to send invoice email: ${err.message}`);
@@ -808,17 +828,17 @@ export class PublicService {
     try {
       await this.postgresProvider.setSchema(tenantId, dbTransaction);
 
-      const voucher = await this.voucherRepository.findOne({
+      const vouchers = await this.voucherRepository.findAll({
         where: { payment_id: orderId },
         include: [{ model: ProductVariant, as: 'product_variant', include: [{ model: Product, as: 'product' }] }],
         transaction: dbTransaction,
       });
       
-      this.logger.log(`[PaymentNotify DEBUG] Searching for voucher with payment_id: ${orderId}. Found: ${voucher ? voucher.id : 'NOT FOUND'}`);
+      this.logger.log(`[PaymentNotify DEBUG] Searching for vouchers with payment_id: ${orderId}. Found: ${vouchers.length} vouchers`);
       
-      if (!voucher) {
+      if (!vouchers || vouchers.length === 0) {
         await dbTransaction.commit();
-        this.logger.log(`[PaymentNotify DEBUG] Early exit because voucher not found.`);
+        this.logger.log(`[PaymentNotify DEBUG] Early exit because vouchers not found.`);
         return { ok: true };
       }
 
@@ -828,29 +848,34 @@ export class PublicService {
       this.logger.log(`[PaymentNotify DEBUG] Evaluated status: isPaid=${isPaid}, isExpiredOrFailed=${isExpiredOrFailed}`);
 
       let shouldSendEmail = false;
-      if (isPaid && voucher.payment_status !== 'PAID') {
-        this.logger.log(`[PaymentNotify DEBUG] Updating voucher ${voucher.id} to PAID and UNUSED`);
-        shouldSendEmail = true;
-        await voucher.update({ payment_status: 'PAID', status: 'UNUSED' }, { transaction: dbTransaction });
+      const firstVoucher = vouchers[0];
 
-        // Update promo code usage if applicable
-        if (voucher.promo_code_id) {
-          const promo = await this.postgresProvider.rawQuery(
+      if (isPaid && firstVoucher.payment_status !== 'PAID') {
+        shouldSendEmail = true;
+
+        for (const v of vouchers) {
+          this.logger.log(`[PaymentNotify DEBUG] Updating voucher ${v.id} to PAID and UNUSED`);
+          await v.update({ payment_status: 'PAID', status: 'UNUSED' }, { transaction: dbTransaction });
+        }
+
+        // Update promo code usage if applicable (once per order)
+        if (firstVoucher.promo_code_id) {
+          await this.postgresProvider.rawQuery(
             `UPDATE promo_code SET current_usage = current_usage + 1 WHERE id = :id`,
             {
-              replacements: { id: voucher.promo_code_id },
+              replacements: { id: firstVoucher.promo_code_id },
               transaction: dbTransaction,
             }
           );
         }
-
-
       }
       else if (isExpiredOrFailed) {
-        await voucher.update(
-          { payment_status: 'FAILED', status: 'EXPIRED' },
-          { transaction: dbTransaction },
-        );
+        for (const v of vouchers) {
+          await v.update(
+            { payment_status: 'FAILED', status: 'EXPIRED' },
+            { transaction: dbTransaction },
+          );
+        }
       }
 
       let siteName = 'Volve Capital';
@@ -869,40 +894,45 @@ export class PublicService {
       await dbTransaction.commit();
 
       if (shouldSendEmail) {
-        const multiplier = (voucher as any).duration_multiplier ? Number((voucher as any).duration_multiplier) : 1;
-        const productName = multiplier > 1
-          ? `${(voucher.product_variant as any)?.product?.name ?? 'Produk'} - ${voucher.product_variant?.name ?? ''} (${multiplier} Hari)`
-          : `${(voucher.product_variant as any)?.product?.name ?? 'Produk'} - ${voucher.product_variant?.name ?? ''}`;
-        
-        // Kirim WhatsApp (non-blocking)
-        if (voucher.buyer_whatsapp) {
-          this.whatsappService
-            .sendVoucherCode({
-              buyerPhone: voucher.buyer_whatsapp,
-              buyerName: voucher.buyer_name,
-              voucherCode: String(voucher.id),
-              productName: productName,
-              expiredAt: voucher.expired_at,
-              tenantId: tenantId,
-            })
-            .catch(err =>
-              this.logger.error(`[WA] Gagal kirim voucher ${voucher.id} (non-fatal):`, err),
-            );
+        const multiplier = (firstVoucher as any).duration_multiplier ? Number((firstVoucher as any).duration_multiplier) : 1;
+        let productName = (firstVoucher.product_variant as any)?.product?.name ?? 'Produk';
+        if (firstVoucher.product_variant?.name) productName += ` - ${firstVoucher.product_variant.name}`;
+        if (multiplier > 1) productName += ` (${multiplier} Hari)`;
+        if (vouchers.length > 1) productName += ` (${vouchers.length} Akun)`;
+
+        // Kirim WhatsApp untuk setiap voucher yang dibeli
+        if (firstVoucher.buyer_whatsapp) {
+          for (const v of vouchers) {
+            this.whatsappService
+              .sendVoucherCode({
+                buyerPhone: v.buyer_whatsapp,
+                buyerName: v.buyer_name,
+                voucherCode: String(v.id),
+                productName: productName,
+                expiredAt: v.expired_at,
+                tenantId: tenantId,
+              })
+              .catch(err =>
+                this.logger.error(`[WA] Gagal kirim voucher ${v.id} (non-fatal):`, err),
+              );
+          }
         }
 
-        // Kirim Email
-        this.logger.log(`[PaymentNotify] Sending confirmation email for voucher ${voucher.id} to ${voucher.buyer_email}`);
-        this.sendPaymentConfirmationEmail(
-          tenantId,
-          voucher.buyer_email,
-          voucher.buyer_name,
-          voucher.id,
-          productName,
-          voucher.expired_at,
-          siteName,
-        ).catch((err) => {
-          this.logger.error(`[PaymentNotify] Failed to send email for voucher ${voucher.id}: ${err.message}`);
-        });
+        // Kirim Email konfirmasi pembayaran untuk setiap voucher
+        for (const v of vouchers) {
+          this.logger.log(`[PaymentNotify] Sending confirmation email for voucher ${v.id} to ${v.buyer_email}`);
+          this.sendPaymentConfirmationEmail(
+            tenantId,
+            v.buyer_email,
+            v.buyer_name,
+            v.id,
+            productName,
+            v.expired_at,
+            siteName,
+          ).catch((err) => {
+            this.logger.error(`[PaymentNotify] Failed to send email for voucher ${v.id}: ${err.message}`);
+          });
+        }
       }
 
       return { ok: true };
@@ -983,20 +1013,27 @@ export class PublicService {
     try {
       await this.postgresProvider.setSchema(tenantId, transaction);
 
-      const voucher = await this.voucherRepository.findOne({
+      const vouchers = await this.voucherRepository.findAll({
         where: { payment_id: orderId },
         transaction,
       });
 
-      if (!voucher) {
+      if (!vouchers || vouchers.length === 0) {
         throw new NotFoundException('Pesanan tidak ditemukan');
       }
+
+      const firstVoucher = vouchers[0];
+      const isPaid = firstVoucher.payment_status === 'PAID';
+      const paidVoucherCodes = isPaid ? vouchers.map(v => v.id) : [];
 
       await transaction.commit();
       return {
         order_id: orderId,
-        payment_status: voucher.payment_status,
-        voucher_code: voucher.payment_status === 'PAID' ? voucher.id : null,
+        payment_status: firstVoucher.payment_status,
+        voucher_code: isPaid ? firstVoucher.id : null,
+        voucher_codes: paidVoucherCodes,
+        quantity: vouchers.length,
+        buyer_whatsapp: firstVoucher.buyer_whatsapp ?? null,
       };
     }
     catch (error) {
@@ -1112,8 +1149,36 @@ export class PublicService {
       const expiredAt = new Date(Date.now() + totalDurationMs);
 
       // 3. Find available account & profile slot
-      //    Prioritas 1: Akun yang subscription_expiry >= expiredAt (masa aktif akun aman selama durasi pesanan)
-      //    Prioritas 2 (Fallback): Akun aktif lainnya jika tidak ada yang memenuhi prioritas 1
+      //    Prioritas Distribusi:
+      //    a. Jangan berikan akun yang sama jika pembeli memesan banyak akun dalam 1 order
+      //    b. Akun yang subscription_expiry >= expiredAt
+      //    c. Fallback jika stok akun berbeda habis, gunakan akun yang tersedia agar redeem tidak gagal
+      let excludedAccountIds: string[] = [];
+      if (voucher.payment_id) {
+        const siblingVouchers = await this.voucherRepository.findAll({
+          where: {
+            payment_id: voucher.payment_id,
+            id: { [Op.ne]: voucher.id },
+            status: 'USED',
+          },
+          include: [
+            {
+              model: this.transactionItemRepository,
+              as: 'transaction_item',
+              include: [{ model: this.accountUserRepository, as: 'user' }],
+            },
+          ],
+          transaction,
+        });
+
+        for (const sv of siblingVouchers) {
+          const u = (sv.transaction_item as any)?.user;
+          if (u?.account_id) {
+            excludedAccountIds.push(u.account_id);
+          }
+        }
+      }
+
       const accounts = await this.accountRepository.findAll({
         where: {
           product_variant_id: voucher.product_variant_id,
@@ -1159,24 +1224,51 @@ export class PublicService {
         return null;
       };
 
+      // Langkah 1: Cari akun yang BEDA (tidak ada di excludedAccountIds)
+      const diffAccounts = excludedAccountIds.length > 0
+        ? accounts.filter((acc) => !excludedAccountIds.includes(acc.id))
+        : accounts;
+
       if (multiplier > 1) {
-        // Prioritaskan akun yang subscription_expiry nya masih cukup untuk seluruh hari yang dibeli
-        const safeAccounts = accounts.filter(
+        // Prioritaskan akun beda yang subscription_expiry nya aman
+        const safeDiffAccounts = diffAccounts.filter(
           (acc) => acc.subscription_expiry && new Date(acc.subscription_expiry) >= expiredAt,
         );
-        const safeSlot = await findSlotInAccounts(safeAccounts);
+        const safeSlot = await findSlotInAccounts(safeDiffAccounts);
         if (safeSlot) {
           chosenAccount = safeSlot.account;
           chosenProfile = safeSlot.profile;
         }
       }
 
-      // Jika belum dapat (atau untuk multiplier = 1), ambil dari akun yang tersedia
+      // Langkah 2: Jika belum dapat, cari akun beda tanpa memandang multiplier (selama masih aktif)
       if (!chosenAccount || !chosenProfile) {
-        const anySlot = await findSlotInAccounts(accounts);
-        if (anySlot) {
-          chosenAccount = anySlot.account;
-          chosenProfile = anySlot.profile;
+        const diffSlot = await findSlotInAccounts(diffAccounts);
+        if (diffSlot) {
+          chosenAccount = diffSlot.account;
+          chosenProfile = diffSlot.profile;
+        }
+      }
+
+      // Langkah 3 (Fallback): Jika semua akun beda sudah habis/penuh, boleh gunakan akun yang sama dari order ini
+      if (!chosenAccount || !chosenProfile) {
+        if (multiplier > 1) {
+          const safeFallback = accounts.filter(
+            (acc) => acc.subscription_expiry && new Date(acc.subscription_expiry) >= expiredAt,
+          );
+          const safeFallbackSlot = await findSlotInAccounts(safeFallback);
+          if (safeFallbackSlot) {
+            chosenAccount = safeFallbackSlot.account;
+            chosenProfile = safeFallbackSlot.profile;
+          }
+        }
+
+        if (!chosenAccount || !chosenProfile) {
+          const anySlot = await findSlotInAccounts(accounts);
+          if (anySlot) {
+            chosenAccount = anySlot.account;
+            chosenProfile = anySlot.profile;
+          }
         }
       }
 
@@ -1211,10 +1303,15 @@ export class PublicService {
         { transaction },
       );
 
-      // 6. Link to transaction_item if possible
-      if (voucher.payment_id) {
+      // 6. Link to transaction_item
+      if (voucher.transaction_item_id) {
+        await this.transactionItemRepository.update(
+          { account_user_id: newUser.id },
+          { where: { id: voucher.transaction_item_id }, transaction },
+        );
+      } else if (voucher.payment_id) {
         const txnItem = await this.transactionItemRepository.findOne({
-          where: { transaction_id: voucher.payment_id },
+          where: { transaction_id: voucher.payment_id, account_user_id: { [Op.eq]: null } as any },
           transaction,
         });
         if (txnItem) {
