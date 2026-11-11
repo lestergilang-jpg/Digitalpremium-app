@@ -725,37 +725,12 @@ export class AccountService {
       };
        if (updateAccountDto.status && updateAccountDto.status !== 'active') {
         if (updateAccountDto.status === 'ready') {
-          // Hanya expire user yang masa aktifnya memang sudah habis (expired_at <= now)
-          // User multi-hari (2-4 hari) yang masih aktif tetap dipertahankan
-          await this.postgresProvider.rawQuery(
-            `UPDATE account_user 
-             SET status = 'expired' 
-             WHERE account_id = :accountId 
-               AND status = 'active' 
-               AND expired_at <= :now`,
-            {
-              replacements: { accountId, now: new Date() },
-              transaction,
-              type: QueryTypes.UPDATE,
-            },
-          );
+          // Smart clear expired & today users, while keeping multi-day users
+          const { remainingActiveUsers, nextExpiry } = await this.smartClearExpiredAndTodayUsers(accountId, transaction);
 
-          // Cek apakah masih ada user yang aktif (misal user 2-4 hari)
-          const [activeUsersResult]: any = await this.postgresProvider.rawQuery(
-            `SELECT COUNT(*)::INT as count, MIN(expired_at) as next_expiry, MIN(created_at) as earliest_start
-             FROM account_user 
-             WHERE account_id = :accountId AND status = 'active'`,
-            {
-              replacements: { accountId },
-              transaction,
-              type: QueryTypes.SELECT,
-            },
-          );
-
-          const remainingActiveUsers = activeUsersResult?.count || 0;
-          if (remainingActiveUsers > 0) {
-            accountUpdateData.batch_start_date = activeUsersResult.earliest_start || new Date();
-            accountUpdateData.batch_end_date = activeUsersResult.next_expiry;
+          if (remainingActiveUsers > 0 && nextExpiry) {
+            const subExpiry = account.subscription_expiry ? new Date(account.subscription_expiry) : null;
+            accountUpdateData.batch_end_date = subExpiry && nextExpiry > subExpiry ? subExpiry : nextExpiry;
           } else {
             accountUpdateData.batch_start_date = null;
             accountUpdateData.batch_end_date = null;
@@ -1105,6 +1080,91 @@ export class AccountService {
     ]);
   }
 
+  /**
+   * Smart Clear Slot:
+   * Meng-expire user yang sudah habis masa aktifnya atau yang berakhir pada hari yang sama (WIB today)
+   * atau sisa durasinya tinggal <= 2 jam.
+   * User multi-harian (2-3 hari) yang masa aktifnya melampaui hari ini tetap dipertahankan (dilindungi).
+   * Rekalkulasi batch_start_date & batch_end_date akun sesuai user yang tersisa.
+   */
+  async smartClearExpiredAndTodayUsers(
+    accountId: string,
+    transaction: any,
+  ): Promise<{ remainingActiveUsers: number; nextExpiry: Date | null }> {
+    const now = new Date();
+
+    // 1. Expire user yang:
+    //    a) Sudah melewati expired_at (expired_at <= now), ATAU
+    //    b) Berakhir di hari kalender WIB yang sama dengan hari ini (Asia/Jakarta), ATAU
+    //    c) Sisa durasinya tinggal <= 2 jam dari sekarang
+    await this.postgresProvider.rawQuery(
+      `UPDATE account_user 
+       SET status = 'expired' 
+       WHERE account_id = :accountId 
+         AND status = 'active' 
+         AND (
+           expired_at <= :now 
+           OR DATE(expired_at AT TIME ZONE 'Asia/Jakarta') <= DATE((:now::timestamptz) AT TIME ZONE 'Asia/Jakarta')
+           OR expired_at <= ((:now::timestamptz) + INTERVAL '2 hours')
+         )`,
+      {
+        replacements: { accountId, now },
+        transaction,
+        type: QueryTypes.UPDATE,
+      },
+    );
+
+    // 2. Hitung sisa user aktif (misal user multi-hari 2-3 hari)
+    const [activeUsersResult]: any = await this.postgresProvider.rawQuery(
+      `SELECT COUNT(*)::INT as count, MIN(expired_at) as next_expiry, MIN(created_at) as earliest_start
+       FROM account_user 
+       WHERE account_id = :accountId AND status = 'active'`,
+      {
+        replacements: { accountId },
+        transaction,
+        type: QueryTypes.SELECT,
+      },
+    );
+
+    const remainingCount = activeUsersResult?.count || 0;
+    const nextExpiry = activeUsersResult?.next_expiry ? new Date(activeUsersResult.next_expiry) : null;
+    const earliestStart = activeUsersResult?.earliest_start ? new Date(activeUsersResult.earliest_start) : null;
+
+    // 3. Update batch_start_date & batch_end_date pada tabel account
+    const account = await this.accountRepository.findOne({
+      where: { id: accountId },
+      transaction,
+    });
+
+    if (account) {
+      if (remainingCount > 0 && nextExpiry) {
+        const subExpiry = account.subscription_expiry ? new Date(account.subscription_expiry) : null;
+        const cappedBatchEnd = subExpiry && nextExpiry > subExpiry ? subExpiry : nextExpiry;
+
+        await this.accountRepository.update(
+          {
+            batch_start_date: earliestStart || now,
+            batch_end_date: cappedBatchEnd,
+          },
+          { where: { id: accountId }, transaction },
+        );
+      } else {
+        await this.accountRepository.update(
+          {
+            batch_start_date: null,
+            batch_end_date: null,
+          },
+          { where: { id: accountId }, transaction },
+        );
+      }
+    }
+
+    return {
+      remainingActiveUsers: remainingCount,
+      nextExpiry,
+    };
+  }
+
   async triggerReset(tenantId: string, accountId: string, targetBot?: string) {
     const transaction = await this.postgresProvider.transaction();
     try {
@@ -1126,6 +1186,9 @@ export class AccountService {
       if (account.status === 'banned') {
         throw new BadRequestException('Cannot trigger task for banned account');
       }
+
+      // Smart clear: bersihkan user yang habis hari ini / sisa <= 2 jam, tapi lindungi user multi-hari
+      await this.smartClearExpiredAndTodayUsers(accountId, transaction);
 
       const payload: NetflixResetPasswordPayload = {
         id: account.id,
@@ -1668,6 +1731,9 @@ export class AccountService {
             let taskType: string;
 
             if (action === 'reset_now') {
+              // Smart clear: bersihkan user yang habis hari ini / sisa <= 2 jam, tapi lindungi user multi-hari
+              await this.smartClearExpiredAndTodayUsers(account.id, transaction);
+
               taskType = NETFLIX_RESET_PASSWORD;
               taskPayload = {
                 id: `${Date.now()}-${account.id}-${Math.random().toString(36).substring(2, 7)}`,
