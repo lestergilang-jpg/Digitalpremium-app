@@ -415,10 +415,7 @@ export function CheckoutModal({ isOpen, onClose, product, variant, initialData }
                           {/* JUMLAH AKUN (QUANTITY) */}
                           <div className="bg-background rounded-xl p-4 border border-border shadow-sm mb-6 space-y-3">
                             <div className="flex items-center justify-between">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Jumlah Akun</span>
-                                <span className="text-[10px] text-muted-foreground font-medium">Email akun dipastikan berbeda</span>
-                              </div>
+                              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Jumlah Akun</span>
                               <span className="text-xs font-black text-primary px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20">
                                 {quantity} Akun
                               </span>
