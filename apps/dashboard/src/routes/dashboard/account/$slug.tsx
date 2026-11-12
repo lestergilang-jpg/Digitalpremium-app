@@ -1911,8 +1911,12 @@ function RouteComponent() {
                                 // Batasi maksimal tanggal reset tidak boleh melewati subscription_expiry akun
                                 if (account.subscription_expiry) {
                                   const subsExpiry = new Date(account.subscription_expiry);
-                                  if (candidateReset > subsExpiry) {
-                                    return formatDateIdStandard(subsExpiry);
+                                  const endOfSubsDay = new Date(subsExpiry);
+                                  if (endOfSubsDay.getHours() === 0 && endOfSubsDay.getMinutes() === 0) {
+                                    endOfSubsDay.setHours(23, 59, 59, 999);
+                                  }
+                                  if (candidateReset > endOfSubsDay) {
+                                    return formatDateIdStandard(endOfSubsDay);
                                   }
                                 }
 

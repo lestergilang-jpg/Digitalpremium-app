@@ -202,7 +202,7 @@ export class AccountService {
                        WHERE ap.account_id = a.id AND au.status = 'active'
                      ) IS NOT NULL THEN
                        LEAST(
-                         COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+                         COALESCE((a.subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
                          (
                            SELECT MIN(au.expired_at)
                            FROM account_user au
@@ -212,7 +212,7 @@ export class AccountService {
                        )
                      WHEN a.batch_end_date IS NOT NULL THEN
                        LEAST(
-                         COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+                         COALESCE((a.subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
                          a.batch_end_date
                        )
                      ELSE NULL
@@ -251,7 +251,7 @@ export class AccountService {
                       WHERE ap.account_id = "Account".id AND au.status = 'active'
                     ) IS NOT NULL THEN
                       LEAST(
-                        COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
+                        COALESCE(("Account".subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
                         (
                           SELECT MIN(au.expired_at)
                           FROM account_user au
@@ -261,7 +261,7 @@ export class AccountService {
                       )
                     WHEN "Account".batch_end_date IS NOT NULL THEN
                       LEAST(
-                        COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
+                        COALESCE(("Account".subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
                         "Account".batch_end_date
                       )
                     ELSE NULL
@@ -269,7 +269,9 @@ export class AccountService {
                 ) ${dir} NULLS LAST`)
               );
             } else if (col === 'subscription_expiry') {
-              finalOrder.push([col, dir, 'NULLS LAST']);
+              finalOrder.push(
+                Sequelize.literal(`"Account"."subscription_expiry" ${dir} NULLS LAST`)
+              );
             } else {
               finalOrder.push([col, dir]);
             }
@@ -763,8 +765,14 @@ export class AccountService {
           const { remainingActiveUsers, nextExpiry } = await this.smartClearExpiredAndTodayUsers(accountId, transaction);
 
           if (remainingActiveUsers > 0 && nextExpiry) {
-            const subExpiry = account.subscription_expiry ? new Date(account.subscription_expiry) : null;
-            accountUpdateData.batch_end_date = subExpiry && nextExpiry > subExpiry ? subExpiry : nextExpiry;
+            let subExpiryEnd: Date | null = null;
+            if (account.subscription_expiry) {
+              subExpiryEnd = new Date(account.subscription_expiry);
+              if (subExpiryEnd.getHours() === 0 && subExpiryEnd.getMinutes() === 0) {
+                subExpiryEnd.setHours(23, 59, 59, 999);
+              }
+            }
+            accountUpdateData.batch_end_date = subExpiryEnd && nextExpiry > subExpiryEnd ? subExpiryEnd : nextExpiry;
           } else {
             accountUpdateData.batch_start_date = null;
             accountUpdateData.batch_end_date = null;
@@ -1172,8 +1180,14 @@ export class AccountService {
 
     if (account) {
       if (remainingCount > 0 && nextExpiry) {
-        const subExpiry = account.subscription_expiry ? new Date(account.subscription_expiry) : null;
-        const cappedBatchEnd = subExpiry && nextExpiry > subExpiry ? subExpiry : nextExpiry;
+        let subExpiryEnd: Date | null = null;
+        if (account.subscription_expiry) {
+          subExpiryEnd = new Date(account.subscription_expiry);
+          if (subExpiryEnd.getHours() === 0 && subExpiryEnd.getMinutes() === 0) {
+            subExpiryEnd.setHours(23, 59, 59, 999);
+          }
+        }
+        const cappedBatchEnd = subExpiryEnd && nextExpiry > subExpiryEnd ? subExpiryEnd : nextExpiry;
 
         await this.accountRepository.update(
           {

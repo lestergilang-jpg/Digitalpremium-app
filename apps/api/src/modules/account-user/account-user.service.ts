@@ -71,7 +71,7 @@ export class AccountUserService {
         SELECT CASE 
           WHEN COUNT(au.id) = 0 THEN NULL
           ELSE LEAST(
-            COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+            COALESCE((a.subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
             MIN(au.expired_at)
           )
         END
