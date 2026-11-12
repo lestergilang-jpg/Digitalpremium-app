@@ -194,21 +194,29 @@ export class AccountService {
              [Op.in]: Sequelize.literal(`
                 (SELECT a.id FROM account a
                  WHERE DATE(
-                   COALESCE(
-                     (
-                       SELECT LEAST(
-                         COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
-                         MIN(au.expired_at)
-                       )
+                   CASE
+                     WHEN (
+                       SELECT MIN(au.expired_at)
                        FROM account_user au
                        JOIN account_profile ap ON ap.id = au.account_profile_id
                        WHERE ap.account_id = a.id AND au.status = 'active'
-                     ),
-                     LEAST(
-                       COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
-                       a.batch_end_date
-                     )
-                   ) AT TIME ZONE 'Asia/Jakarta'
+                     ) IS NOT NULL THEN
+                       LEAST(
+                         COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+                         (
+                           SELECT MIN(au.expired_at)
+                           FROM account_user au
+                           JOIN account_profile ap ON ap.id = au.account_profile_id
+                           WHERE ap.account_id = a.id AND au.status = 'active'
+                         )
+                       )
+                     WHEN a.batch_end_date IS NOT NULL THEN
+                       LEAST(
+                         COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+                         a.batch_end_date
+                       )
+                     ELSE NULL
+                   END AT TIME ZONE 'Asia/Jakarta'
                  ) = DATE(NOW() AT TIME ZONE 'Asia/Jakarta')
                 )
              `)
@@ -233,25 +241,33 @@ export class AccountService {
             if (col === 'id') {
               finalOrder.push(['updated_at', 'DESC']);
             } else if (col === 'batch_end_date') {
-              finalOrder.push([
-                Sequelize.literal(`COALESCE(
-                  (
-                    SELECT LEAST(
-                      COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
-                      MIN(au.expired_at)
-                    )
-                    FROM account_user au
-                    JOIN account_profile ap ON ap.id = au.account_profile_id
-                    WHERE ap.account_id = "Account".id AND au.status = 'active'
-                  ),
-                  LEAST(
-                    COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
-                    "Account".batch_end_date
-                  )
-                )`),
-                dir,
-                'NULLS LAST'
-              ]);
+              finalOrder.push(
+                Sequelize.literal(`(
+                  CASE
+                    WHEN (
+                      SELECT MIN(au.expired_at)
+                      FROM account_user au
+                      JOIN account_profile ap ON ap.id = au.account_profile_id
+                      WHERE ap.account_id = "Account".id AND au.status = 'active'
+                    ) IS NOT NULL THEN
+                      LEAST(
+                        COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
+                        (
+                          SELECT MIN(au.expired_at)
+                          FROM account_user au
+                          JOIN account_profile ap ON ap.id = au.account_profile_id
+                          WHERE ap.account_id = "Account".id AND au.status = 'active'
+                        )
+                      )
+                    WHEN "Account".batch_end_date IS NOT NULL THEN
+                      LEAST(
+                        COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
+                        "Account".batch_end_date
+                      )
+                    ELSE NULL
+                  END
+                ) ${dir} NULLS LAST`)
+              );
             } else if (col === 'subscription_expiry') {
               finalOrder.push([col, dir, 'NULLS LAST']);
             } else {
