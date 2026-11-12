@@ -1592,13 +1592,13 @@ function RouteComponent() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-48">
-                      <DropdownMenuItem onSelect={() => setDialogBulkLabelOpen(true)}>
-                        <Tag className="mr-2 h-4 w-4" />
-                        Kelola Label Massal
-                      </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => setDialogBulkEditOpen(true)}>
                         <SquarePen className="mr-2 h-4 w-4" />
                         Edit Massal
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setDialogBulkLabelOpen(true)}>
+                        <Tag className="mr-2 h-4 w-4" />
+                        Kelola Label Massal
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => handleBulkActionClick('enable')}>
                         <Check className="mr-2 h-4 w-4" />
