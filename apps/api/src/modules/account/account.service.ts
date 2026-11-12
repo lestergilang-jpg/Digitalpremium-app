@@ -194,12 +194,21 @@ export class AccountService {
              [Op.in]: Sequelize.literal(`
                 (SELECT a.id FROM account a
                  WHERE DATE(
-                   COALESCE((
-                     SELECT MAX(au.expired_at)
-                     FROM account_user au
-                     JOIN account_profile ap ON ap.id = au.account_profile_id
-                     WHERE ap.account_id = a.id AND au.status = 'active'
-                   ), a.batch_end_date) AT TIME ZONE 'Asia/Jakarta'
+                   COALESCE(
+                     (
+                       SELECT LEAST(
+                         COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+                         MIN(au.expired_at)
+                       )
+                       FROM account_user au
+                       JOIN account_profile ap ON ap.id = au.account_profile_id
+                       WHERE ap.account_id = a.id AND au.status = 'active'
+                     ),
+                     LEAST(
+                       COALESCE(a.subscription_expiry, 'infinity'::timestamptz),
+                       a.batch_end_date
+                     )
+                   ) AT TIME ZONE 'Asia/Jakarta'
                  ) = DATE(NOW() AT TIME ZONE 'Asia/Jakarta')
                 )
              `)
@@ -225,12 +234,21 @@ export class AccountService {
               finalOrder.push(['updated_at', 'DESC']);
             } else if (col === 'batch_end_date') {
               finalOrder.push([
-                Sequelize.literal(`COALESCE((
-                  SELECT MAX(au.expired_at)
-                  FROM account_user au
-                  JOIN account_profile ap ON ap.id = au.account_profile_id
-                  WHERE ap.account_id = "Account".id AND au.status = 'active'
-                ), "Account".batch_end_date)`),
+                Sequelize.literal(`COALESCE(
+                  (
+                    SELECT LEAST(
+                      COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
+                      MIN(au.expired_at)
+                    )
+                    FROM account_user au
+                    JOIN account_profile ap ON ap.id = au.account_profile_id
+                    WHERE ap.account_id = "Account".id AND au.status = 'active'
+                  ),
+                  LEAST(
+                    COALESCE("Account".subscription_expiry, 'infinity'::timestamptz),
+                    "Account".batch_end_date
+                  )
+                )`),
                 dir,
                 'NULLS LAST'
               ]);
