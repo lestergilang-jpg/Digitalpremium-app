@@ -1729,6 +1729,51 @@ export class AccountService {
             }
           }
           break;
+        case 'add_label': {
+          const rawLabelIds = payload?.label_ids || (payload?.label_id ? [payload.label_id] : []);
+          const labelIds: string[] = Array.isArray(rawLabelIds) ? rawLabelIds.filter(Boolean) : [];
+
+          if (labelIds.length > 0 && ids.length > 0) {
+            const validAccounts = await this.accountRepository.findAll({
+              where: { id: { [Op.in]: ids } },
+              attributes: ['id'],
+              transaction,
+            });
+
+            const records: { account_id: string; label_id: string }[] = [];
+            for (const acc of validAccounts) {
+              for (const lId of labelIds) {
+                records.push({
+                  account_id: acc.id,
+                  label_id: lId,
+                });
+              }
+            }
+
+            if (records.length > 0) {
+              await this.accountLabelRepository.bulkCreate(records, {
+                ignoreDuplicates: true,
+                transaction,
+              });
+            }
+          }
+          break;
+        }
+        case 'remove_label': {
+          const rawLabelIds = payload?.label_ids || (payload?.label_id ? [payload.label_id] : []);
+          const labelIds: string[] = Array.isArray(rawLabelIds) ? rawLabelIds.filter(Boolean) : [];
+
+          if (labelIds.length > 0 && ids.length > 0) {
+            await this.accountLabelRepository.destroy({
+              where: {
+                account_id: { [Op.in]: ids },
+                label_id: { [Op.in]: labelIds },
+              },
+              transaction,
+            });
+          }
+          break;
+        }
         case 'delete':
           await this.accountRepository.destroy({
             where: { id: { [Op.in]: ids } },

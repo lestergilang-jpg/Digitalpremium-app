@@ -58,6 +58,7 @@ import {
   Warehouse,
   X,
   Ban,
+  Tag,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
@@ -81,6 +82,7 @@ import { NoData } from '@/dashboard/components/no-data'
 import { Pagination } from '@/dashboard/components/pagination'
 import { AccountLabelManager } from '@/dashboard/components/account-label-manager'
 import { AccountLabelSelector } from '@/dashboard/components/account-label-selector'
+import { AccountBulkLabelDialog } from '@/dashboard/components/account-bulk-label-dialog'
 
 import { PermissionGate } from '@/dashboard/components/permission-gate'
 
@@ -207,6 +209,7 @@ function RouteComponent() {
   const [dialogSyncCookiesOpen, setDialogSyncCookiesOpen] = useState<boolean>(false)
   const [selectedSyncBot, setSelectedSyncBot] = useState<string>('')
   const [dialogBulkEditOpen, setDialogBulkEditOpen] = useState<boolean>(false)
+  const [dialogBulkLabelOpen, setDialogBulkLabelOpen] = useState<boolean>(false)
   const [bulkActionType, setBulkActionType] = useState<string>('')
   const [bulkModalAmount, setBulkModalAmount] = useState<string>('')
   const [bulkModalNote, setBulkModalNote] = useState<string>('')
@@ -1589,6 +1592,10 @@ function RouteComponent() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-48">
+                      <DropdownMenuItem onSelect={() => setDialogBulkLabelOpen(true)}>
+                        <Tag className="mr-2 h-4 w-4" />
+                        Kelola Label Massal
+                      </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => setDialogBulkEditOpen(true)}>
                         <SquarePen className="mr-2 h-4 w-4" />
                         Edit Massal
@@ -2571,6 +2578,16 @@ function RouteComponent() {
           />
         </DialogContent>
       </Dialog>
+
+      <AccountBulkLabelDialog
+        open={dialogBulkLabelOpen}
+        onOpenChange={setDialogBulkLabelOpen}
+        selectedIds={selectedIds}
+        productVariantId={searchParam.product_variant_id || product?.variants?.[0]?.id || ''}
+        onSuccess={() => {
+          setSelectedIds([])
+        }}
+      />
 
       <TvPinModal
         isOpen={tvPinModalOpen}
