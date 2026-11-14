@@ -5,12 +5,13 @@
   "packageManager": "pnpm@10.28.2",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "ncc build src/main.ts -o dist/bundle -e better-sqlite3 -e playwright -e winston -e socket.io-client -e js-toml -e yoctocolors -e winston-daily-rotate-file -e qrcode-terminal -e whatsapp-web.js -e puppeteer",
+    "build": "ncc build src/main.ts -o dist/bundle -e @google/genai -e better-sqlite3 -e playwright -e winston -e socket.io-client -e js-toml -e yoctocolors -e winston-daily-rotate-file -e qrcode-terminal -e whatsapp-web.js -e puppeteer",
     "start": "node dist/bundle/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@google/genai": "^2.30.0",
     "better-sqlite3": "^12.6.2",
     "js-toml": "^1.0.2",
     "playwright": "^1.58.0",

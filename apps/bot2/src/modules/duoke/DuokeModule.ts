@@ -11,8 +11,21 @@ import * as locators from './locators.js';
 import { resolve } from 'node:path';
 import { getProjectRoot } from '../../utils/path.js';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { GeminiChatService, GenerateReplyResult } from './GeminiChatService.js';
+import { OllamaChatService } from './OllamaChatService.js';
 
-const CHAT_URL = 'https://web.duoke.com/?lang=en#/dk/main/chat';
+interface DuokeChatService {
+    callBackendNetflixToken?(buyerName?: string, orderId?: string): Promise<any>;
+    generateReply(params: {
+        username: string;
+        orderId?: string;
+        orderStatus?: string;
+        chatHistory: locators.ChatMessage[];
+        accountInfo?: any;
+    }): Promise<GenerateReplyResult>;
+}
+
+const CHAT_URL = 'https://ai.duoke.com/?lang=en#/dk/main/chat';
 const DEFAULT_CHECK_INTERVAL = 30000;
 
 export class DuokeModule extends BaseModule {
@@ -20,11 +33,43 @@ export class DuokeModule extends BaseModule {
     private loopPage: Page | null = null;
     private historyPath: string;
     private loopCount: number = 0; // Tambahkan counter untuk refresh
+    private aiService: DuokeChatService | null = null;
+    private escalatedUsers: Map<string, number> = new Map(); // username -> escalated timestamp (ms)
+    private lastRepliedTextPerUser: Map<string, string> = new Map(); // username -> last replied buyer message
 
     constructor(deps: ModuleDependencies, instanceId: string, config: ModuleConfig) {
         super(deps, instanceId, config);
         this.duokeConfig = config as unknown as DuokeConfig;
         this.historyPath = resolve(getProjectRoot(), 'storage', `duoke_history_${this.instanceId}.json`);
+
+        const provider = this.duokeConfig.ai_provider || (this.duokeConfig.ollama_model ? 'ollama' : 'gemini');
+        const geminiApiKey = process.env.GEMINI_API_KEY || this.duokeConfig.gemini_api_key;
+
+        if (provider === 'ollama') {
+            const ollamaModel = this.duokeConfig.ollama_model || 'qwen2.5:7b';
+            const ollamaBaseUrl = this.duokeConfig.ollama_base_url || 'http://127.0.0.1:11434';
+            this.aiService = new OllamaChatService({
+                baseUrl: ollamaBaseUrl,
+                model: ollamaModel,
+                sopFilePath: this.duokeConfig.sop_file_path || 'sop_duoke.md',
+                apiBaseUrl: this.apiBaseUrl,
+                authCredentials: this.authCredentials,
+                logger: this.logger,
+            });
+            this.logger.info(`DuokeModule: Ollama Local AI Auto-Reply AKTIF (model: ${ollamaModel}, url: ${ollamaBaseUrl})`);
+        } else if (geminiApiKey) {
+            this.aiService = new GeminiChatService({
+                apiKey: geminiApiKey,
+                model: this.duokeConfig.gemini_model || 'gemini-3.8-flash',
+                sopFilePath: this.duokeConfig.sop_file_path || 'sop_duoke.md',
+                apiBaseUrl: this.apiBaseUrl,
+                authCredentials: this.authCredentials,
+                logger: this.logger,
+            });
+            this.logger.info(`DuokeModule: Gemini AI Auto-Reply AKTIF (model: ${this.duokeConfig.gemini_model || 'gemini-3.8-flash'})`);
+        } else {
+            this.logger.info('DuokeModule: AI tidak terkonfigurasi, berjalan dalam mode balasan statis.');
+        }
     }
 
     async setupSchema(): Promise<void> {
@@ -118,17 +163,6 @@ export class DuokeModule extends BaseModule {
             this.logger.debug('Gagal tutup popup atau tidak ada popup: ' + e);
         }
 
-        // Pindah ke tab unanswered sebelum scan
-        try {
-            const unansweredTab = locators.getUnansweredTab(this.loopPage);
-            if (await unansweredTab.isVisible()) {
-                await unansweredTab.click();
-                await this.sleep(2000); // Tunggu filter diterapkan
-            }
-        } catch (e) {
-            this.logger.debug('Gagal klik tab unanswered: ' + e);
-        }
-
         // Cari semua kontainer chat yang punya badge unread DAN nama pembeli
         const chatItems = await locators.getChatItem(this.loopPage).all();
         
@@ -142,7 +176,7 @@ export class DuokeModule extends BaseModule {
         
         for (const item of chatItems) {
             try {
-                const buyerElement = item.locator('div.buyer_name').first();
+                const buyerElement = item.locator('div.buyer_name, [class*="buyer_name"], [class*="buyerName"]').first();
                 if (!await buyerElement.isVisible()) continue;
                 
                 const username = (await buyerElement.innerText()).trim().toLowerCase();
@@ -157,21 +191,35 @@ export class DuokeModule extends BaseModule {
         // Proses setiap user unik
         for (const [username, item] of uniqueUsersToProcess.entries()) {
             try {
-                // Cek apakah sudah dibalas hari ini
-                if (repliedUsers.includes(username)) {
-                    this.logger.info(`Skipping ${username}: already replied today`);
+                // Cek apakah user sedang dalam masa eskalasi ke admin (timeout 2 jam)
+                const ESCALATION_TTL_MS = 2 * 60 * 60 * 1000;
+                const escalatedAt = this.escalatedUsers.get(username);
+                if (escalatedAt) {
+                    if (Date.now() - escalatedAt < ESCALATION_TTL_MS) {
+                        const remainingMinutes = Math.round((ESCALATION_TTL_MS - (Date.now() - escalatedAt)) / 60000);
+                        this.logger.info(`Skipping ${username}: percakapan sudah dieskalasikan ke admin manusia (${remainingMinutes} menit tersisa)`);
+                        continue;
+                    } else {
+                        this.escalatedUsers.delete(username);
+                        this.logger.info(`Eskalasi untuk ${username} telah berakhir (> 2 jam). AI kembali aktif untuk pembeli ini.`);
+                    }
+                }
+
+                // Cek apakah sudah dibalas hari ini (hanya jika mode statis)
+                const isAiActive = this.aiService && this.duokeConfig.ai_reply_enabled !== false;
+                if (!isAiActive && repliedUsers.includes(username)) {
+                    this.logger.info(`Skipping ${username}: already replied today (mode statis)`);
                     continue;
                 }
 
                 // Double check spesifik ke badge sup
-                const badge = item.locator('sup.el-badge__content.is-fixed:visible').first();
+                const badge = item.locator('sup.dk-badge__content.is-fixed:visible, sup.el-badge__content.is-fixed:visible, sup[class*="-badge__content"].is-fixed:visible').first();
                 if (!await badge.isVisible()) continue;
  
                  this.logger.info(`Processing unread message from: ${username}`);
  
                  // Klik LANGSUNG pada nama pembeli
-                 await item.locator('div.buyer_name').first().click({ force: true });
-                 // Removed 3s sleep to be more responsive
+                 await item.locator('div.buyer_name, [class*="buyer_name"], [class*="buyerName"]').first().click({ force: true });
 
                 const textarea = locators.getChatTextarea(this.loopPage);
                 try {
@@ -187,6 +235,7 @@ export class DuokeModule extends BaseModule {
                     let isShipped = false;
                     let shippedCategory = '';
                     let shippedExpired = false;
+                    let orderId = '';
                     
                     try {
                         const orderTab = locators.getOrderTab(this.loopPage);
@@ -199,13 +248,22 @@ export class DuokeModule extends BaseModule {
                             
                             // [DEBUG] Tunggu sebentar sampai tag apa pun muncul di pane-order (maksimal 3 detik)
                             try {
-                                await this.loopPage.waitForSelector('#pane-order .el-tag', { state: 'visible', timeout: 3000 });
+                                await this.loopPage.waitForSelector('#pane-order [class*="tag"]', { state: 'visible', timeout: 3000 });
                             } catch (e) {
-                                this.logger.debug('[DEBUG] Timeout: Tidak ada .el-tag yang muncul di #pane-order dalam 3 detik.');
+                                this.logger.debug('[DEBUG] Timeout: Tidak ada tag yang muncul di #pane-order dalam 3 detik.');
                             }
 
+                            // Cek Order ID jika ada
+                            try {
+                                const orderIdLoc = locators.getOrderId(this.loopPage);
+                                if (await orderIdLoc.isVisible()) {
+                                    orderId = (await orderIdLoc.innerText()).trim();
+                                    this.logger.info(`[Duoke] Terdeteksi Order ID: ${orderId} untuk ${username}`);
+                                }
+                            } catch (e) {}
+
                             // [DEBUG] Cetak semua tag yang ditemukan
-                            const allTags = await this.loopPage.locator('#pane-order .el-tag').allInnerTexts();
+                            const allTags = await this.loopPage.locator('#pane-order [class*="tag"]').allInnerTexts();
                             this.logger.info(`[DEBUG] Tag yang terdeteksi di panel Order untuk ${username}: ${JSON.stringify(allTags)}`);
                             
                             const readyToShipTag = locators.getReadyToShipTag(this.loopPage);
@@ -254,32 +312,142 @@ export class DuokeModule extends BaseModule {
                         this.logger.debug('Gagal cek status order: ' + err);
                     }
 
-                    const defaultReply = process.env.REPLY_LINES || this.duokeConfig.reply_lines || 'Ready kak Silahkan Order';
-                    const readyToShipReply = process.env.REPLY_READY_TO_SHIP || this.duokeConfig.reply_ready_to_ship || 'Pesanan kakak sudah kami terima dan sedang kami proses. Mohon ditunggu sebentar ya';
-                    const unpaidReply = process.env.REPLY_UNPAID || this.duokeConfig.reply_unpaid || 'Segara selesaikan payment dan akan kami proses secepatnya kak 😊';
-                    
-                    let finalReply = defaultReply;
-                    if (isReadyToShip) {
-                        finalReply = readyToShipReply;
-                        this.logger.info(`Status "Ready to Ship" DITEMUKAN untuk ${username}, membalas dengan reply_ready_to_ship`);
-                    } else if (isUnpaid) {
-                        finalReply = unpaidReply;
-                        this.logger.info(`Status "Unpaid" DITEMUKAN untuk ${username}, membalas dengan reply_unpaid`);
-                    } else if (isShipped) {
-                        if (shippedCategory === 'harian') {
-                            finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_harian || '') : (this.duokeConfig.Shipped_reply_harian || '');
-                        } else if (shippedCategory === 'mingguan') {
-                            finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_mingguan || '') : (this.duokeConfig.Shipped_reply_mingguan || '');
-                        } else if (shippedCategory === 'sharing_bulanan') {
-                            finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_sharing_bulanan || '') : (this.duokeConfig.Shipped_reply_sharing_bulanan || '');
-                        } else if (shippedCategory === 'bulanan') {
-                            finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_bulanan || '') : (this.duokeConfig.Shipped_reply_bulanan || '');
+                    let finalReply = '';
+                    let lastRepliedBuyerText = '';
+
+                    // 1. Coba Balasan via AI jika diaktifkan
+                    if (isAiActive && this.aiService) {
+                        const debounceSec = this.duokeConfig.ai_debounce_seconds ?? 4;
+                        if (debounceSec > 0) {
+                            this.logger.info(`Menunggu debounce ${debounceSec} detik untuk ${username}...`);
+                            await this.sleep(debounceSec * 1000);
                         }
-                        
-                        if (!finalReply) finalReply = defaultReply;
-                        this.logger.info(`Status "Shipped" DITEMUKAN untuk ${username} (${shippedCategory}, expired: ${shippedExpired}), membalas dengan custom shipped reply`);
+
+                        // Ekstraksi riwayat chat terbaru
+                        const chatHistory = await locators.extractRecentChatMessages(this.loopPage, 6);
+                        this.logger.info(`[DEBUG] chatHistory untuk ${username}: ${chatHistory.length} pesan ditemukan. ${chatHistory.length > 0 ? JSON.stringify(chatHistory.slice(-2)) : 'KOSONG'}`);
+                        // Cek apakah pesan terakhir dikirim oleh toko sendiri (hindari membalas diri sendiri)
+                        if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].sender === 'seller') {
+                            this.logger.info(`Pesan terakhir untuk ${username} sudah dikirim oleh penjual. Melewati.`);
+                            continue;
+                        }
+
+                        // Cek pesan terakhir pembeli untuk menghindari pengulangan balasan pada pesan yang sama
+                        const lastBuyerMsg = [...chatHistory].reverse().find(m => m.sender === 'buyer');
+                        if (lastBuyerMsg) {
+                            const rawBuyerText = lastBuyerMsg.text.trim();
+                            if (this.lastRepliedTextPerUser.get(username) === rawBuyerText) {
+                                this.logger.info(`[DuokeModule] Pesan buyer terakhir dari ${username} ("${rawBuyerText}") sudah pernah dibalas. Melewati.`);
+                                continue;
+                            }
+                            lastRepliedBuyerText = rawBuyerText;
+                        }
+
+                        // Deteksi respon cepat / Mirroring untuk chat pendek (Ok, Makasih, dsb) tanpa panggil AI/database
+                        let isMirroringHandled = false;
+                        if (lastBuyerMsg) {
+                            const clean = lastBuyerMsg.text.trim().toLowerCase().replace(/[.!?~,]/g, '').trim();
+
+                            // 1. Terima kasih / Thanks
+                            const isThankYou = /^(makasih|makasi|terima\s*kasih|terimakasih|thanks|thank\s*you|thx|tq|tengkyu|suwun|maturnuwun)(\s+(kak|ya|min|banyak))*$/i.test(clean);
+
+                            // 2. Konfirmasi / Balasan Pendek ("ok", "siap", "baik", dsb)
+                            const isAck = /^(ok|oke|okee|okey|okay|siap|siaap|baik|baiklah|noted|sip|sipp|mantap|yoi|yoii|siap\s*kak|oke\s*kak|ok\s*kak)(\s+(kak|ya|min))*$/i.test(clean);
+
+                            if (isThankYou) {
+                                finalReply = 'Iya kak sama-sama ya kak 😊';
+                                this.logger.info(`[DuokeModule] Terdeteksi ucapan terima kasih dari ${username} ("${lastBuyerMsg.text}"). Balas mirroring: "${finalReply}"`);
+                                isMirroringHandled = true;
+                            } else if (isAck) {
+                                const ackReplies = ['Baik kak 😊', 'Siap kak 😊', 'Oke kak 😊'];
+                                finalReply = ackReplies[Math.floor(Math.random() * ackReplies.length)];
+                                this.logger.info(`[DuokeModule] Terdeteksi konfirmasi pendek/OK dari ${username} ("${lastBuyerMsg.text}"). Balas mirroring: "${finalReply}"`);
+                                isMirroringHandled = true;
+                            }
+                        }
+
+                        if (!isMirroringHandled) {
+                            // Ekstraksi kode voucher atau nomor pesanan dari riwayat chat pembeli jika ada
+                            let chatDetectedOrder = '';
+                            for (let i = chatHistory.length - 1; i >= 0; i--) {
+                                const msg = chatHistory[i];
+                                if (msg.sender === 'buyer') {
+                                    const matches = msg.text.match(/VC-[A-Z0-9]+/gi) || [];
+                                    for (const m of matches) {
+                                        // Abaikan teks contoh seperti "VC-xxx" atau "VC-XXX"
+                                        if (!/^VC-X+$/i.test(m)) {
+                                            chatDetectedOrder = m.toUpperCase();
+                                            this.logger.info(`[DuokeModule] Terdeteksi kode voucher di chat untuk ${username}: ${chatDetectedOrder}`);
+                                            break;
+                                        }
+                                    }
+                                    if (chatDetectedOrder) break;
+                                }
+                            }
+                            const effectiveOrderId = chatDetectedOrder || orderId || undefined;
+
+                            let orderStatusDesc = 'Tidak diketahui';
+                            if (isReadyToShip) orderStatusDesc = 'Ready to Ship (Pesanan sudah dibayar, sedang diproses)';
+                            else if (isUnpaid) orderStatusDesc = 'Unpaid (Pesanan belum dibayar)';
+                            else if (isShipped) orderStatusDesc = `Shipped (Kategori di panel: ${shippedCategory || 'umum'})`;
+
+                            // Identifikasi pembeli & transaksi terakhir di database kita (digitalpremium.id/dashboard/transaction)
+                            let accountInfo: any = null;
+                            if (typeof this.aiService.callBackendNetflixToken === 'function') {
+                                try {
+                                    this.logger.info(`[DuokeModule] Mengidentifikasi username di database transaksi untuk buyer: ${username}, orderId/voucher: ${effectiveOrderId || 'none'}...`);
+                                    accountInfo = await this.aiService.callBackendNetflixToken(username, effectiveOrderId);
+                                    this.logger.info(`[DuokeModule] Hasil identifikasi database untuk ${username}: ${JSON.stringify(accountInfo)}`);
+                                } catch (err: any) {
+                                    this.logger.warn(`[DuokeModule] Gagal cek database transaksi: ${err.message}`);
+                                }
+                            }
+
+                            this.logger.info(`Meminta AI (${this.duokeConfig.ai_provider || 'ai'}) menyusun balasan untuk ${username}...`);
+                            const aiResult = await this.aiService.generateReply({
+                                username,
+                                orderId: effectiveOrderId,
+                                orderStatus: orderStatusDesc,
+                                chatHistory,
+                                accountInfo,
+                            });
+
+                            if (aiResult.escalated) {
+                                this.escalatedUsers.set(username, Date.now());
+                                this.logger.warn(`User ${username} dialihkan ke eskalasi admin manusia (selama 2 jam).`);
+                            }
+
+                            finalReply = aiResult.replyText;
+                        }
                     } else {
-                        this.logger.info(`Status khusus TIDAK DITEMUKAN untuk ${username}, membalas dengan reply_lines reguler`);
+                        // 2. Fallback ke Balasan Statis
+                        const defaultReply = process.env.REPLY_LINES || this.duokeConfig.reply_lines || 'Ready kak Silahkan Order';
+                        const readyToShipReply = process.env.REPLY_READY_TO_SHIP || this.duokeConfig.reply_ready_to_ship || 'Pesanan kakak sudah kami terima dan sedang kami proses. Mohon ditunggu sebentar ya';
+                        const unpaidReply = process.env.REPLY_UNPAID || this.duokeConfig.reply_unpaid || 'Segara selesaikan payment dan akan kami proses secepatnya kak 😊';
+
+                        finalReply = defaultReply;
+                        if (isReadyToShip) {
+                            finalReply = readyToShipReply;
+                            this.logger.info(`Status "Ready to Ship" DITEMUKAN untuk ${username}, membalas dengan reply_ready_to_ship`);
+                        } else if (isUnpaid) {
+                            finalReply = unpaidReply;
+                            this.logger.info(`Status "Unpaid" DITEMUKAN untuk ${username}, membalas dengan reply_unpaid`);
+                        } else if (isShipped) {
+                            if (shippedCategory === 'harian') {
+                                finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_harian || '') : (this.duokeConfig.Shipped_reply_harian || '');
+                            } else if (shippedCategory === 'mingguan') {
+                                finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_mingguan || '') : (this.duokeConfig.Shipped_reply_mingguan || '');
+                            } else if (shippedCategory === 'sharing_bulanan') {
+                                finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_sharing_bulanan || '') : (this.duokeConfig.Shipped_reply_sharing_bulanan || '');
+                            } else if (shippedCategory === 'bulanan') {
+                                finalReply = shippedExpired ? (this.duokeConfig.Shipped_reply_habis_bulanan || '') : (this.duokeConfig.Shipped_reply_bulanan || '');
+                            }
+
+                            if (!finalReply) finalReply = defaultReply;
+                            this.logger.info(`Status "Shipped" DITEMUKAN untuk ${username} (${shippedCategory}, expired: ${shippedExpired}), membalas dengan custom shipped reply`);
+                        } else {
+                            this.logger.info(`Status khusus TIDAK DITEMUKAN untuk ${username}, membalas dengan reply_lines reguler`);
+                        }
                     }
 
                     const replyLines = finalReply
@@ -322,15 +490,21 @@ export class DuokeModule extends BaseModule {
                         }
 
                         try {
-                        this.saveRepliedUser(username);
-                        repliedUsers.push(username); 
-                        this.logger.info(`Successfully replied to ${username}`);
-                    } catch (dbError) {
-                        this.logger.error(`Failed to save history for ${username}: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+                            if (lastRepliedBuyerText) {
+                                this.lastRepliedTextPerUser.set(username, lastRepliedBuyerText);
+                            }
+                            this.saveRepliedUser(username);
+                            repliedUsers.push(username); 
+                            this.logger.info(`Successfully replied to ${username}`);
+                        } catch (dbError) {
+                            this.logger.error(`Failed to save history for ${username}: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+                        }
+                        
+                        // Selesai membalas 1 pembeli, break loop agar putaran loop berikutnya (2s) membaca daftar chat terbaru
+                        break;
+                    } else {
+                        this.logger.warn(`Kolom input chat tidak terlihat untuk ${username}, pesan tidak dapat dikirim.`);
                     }
-                    
-                    // Removed 3s sleep to be more responsive
-                    } // Menutup if (await inputBox.isVisible())
                 } // Menutup if (await textarea.isVisible())
 
             } catch (error) {

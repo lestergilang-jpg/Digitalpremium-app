@@ -6,6 +6,14 @@ export interface DuokeConfig {
   module: 'duoke';
   name: string;
   loop_interval?: number;
+  ai_provider?: 'ollama' | 'gemini';
+  ollama_base_url?: string;
+  ollama_model?: string;
+  gemini_api_key?: string;
+  gemini_model?: string;
+  sop_file_path?: string;
+  ai_reply_enabled?: boolean;
+  ai_debounce_seconds?: number;
   reply_lines?: string;
   reply_ready_to_ship?: string;
   reply_unpaid?: string;

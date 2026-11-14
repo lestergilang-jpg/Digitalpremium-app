@@ -1238,9 +1238,6 @@ export class AccountService {
         throw new BadRequestException('Cannot trigger task for banned account');
       }
 
-      // Smart clear: bersihkan user yang habis hari ini / sisa <= 2 jam, tapi lindungi user multi-hari
-      await this.smartClearExpiredAndTodayUsers(accountId, transaction);
-
       const payload: NetflixResetPasswordPayload = {
         id: account.id,
         accountId: account.id,
@@ -1827,9 +1824,6 @@ export class AccountService {
             let taskType: string;
 
             if (action === 'reset_now') {
-              // Smart clear: bersihkan user yang habis hari ini / sisa <= 2 jam, tapi lindungi user multi-hari
-              await this.smartClearExpiredAndTodayUsers(account.id, transaction);
-
               taskType = NETFLIX_RESET_PASSWORD;
               taskPayload = {
                 id: `${Date.now()}-${account.id}-${Math.random().toString(36).substring(2, 7)}`,

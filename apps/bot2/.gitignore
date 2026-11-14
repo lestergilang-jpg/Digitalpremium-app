@@ -18,6 +18,8 @@ session_data/
 .env
 .env.local
 config.toml
+config*.toml
+!config.example.toml
 
 # IDE
 .vscode/
