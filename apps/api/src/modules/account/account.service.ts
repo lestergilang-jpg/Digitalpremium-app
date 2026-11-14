@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import * as moment from 'moment-timezone';
 import { Op, Order, QueryTypes, WhereOptions, Sequelize } from 'sequelize';
 import {
   ACCOUNT_REPOSITORY,
@@ -202,7 +203,7 @@ export class AccountService {
                        WHERE ap.account_id = a.id AND au.status = 'active'
                      ) IS NOT NULL THEN
                        LEAST(
-                         COALESCE((a.subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
+                         COALESCE(((a.subscription_expiry AT TIME ZONE 'Asia/Jakarta')::date + TIME '23:59:59.999') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
                          (
                            SELECT MIN(au.expired_at)
                            FROM account_user au
@@ -212,7 +213,7 @@ export class AccountService {
                        )
                      WHEN a.batch_end_date IS NOT NULL THEN
                        LEAST(
-                         COALESCE((a.subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
+                         COALESCE(((a.subscription_expiry AT TIME ZONE 'Asia/Jakarta')::date + TIME '23:59:59.999') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
                          a.batch_end_date
                        )
                      ELSE NULL
@@ -251,7 +252,7 @@ export class AccountService {
                       WHERE ap.account_id = "Account".id AND au.status = 'active'
                     ) IS NOT NULL THEN
                       LEAST(
-                        COALESCE(("Account".subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
+                        COALESCE(((("Account".subscription_expiry AT TIME ZONE 'Asia/Jakarta')::date + TIME '23:59:59.999') AT TIME ZONE 'Asia/Jakarta'), 'infinity'::timestamptz),
                         (
                           SELECT MIN(au.expired_at)
                           FROM account_user au
@@ -261,7 +262,7 @@ export class AccountService {
                       )
                     WHEN "Account".batch_end_date IS NOT NULL THEN
                       LEAST(
-                        COALESCE(("Account".subscription_expiry::date + TIME '23:59:59') AT TIME ZONE 'Asia/Jakarta', 'infinity'::timestamptz),
+                        COALESCE(((("Account".subscription_expiry AT TIME ZONE 'Asia/Jakarta')::date + TIME '23:59:59.999') AT TIME ZONE 'Asia/Jakarta'), 'infinity'::timestamptz),
                         "Account".batch_end_date
                       )
                     ELSE NULL
@@ -767,10 +768,11 @@ export class AccountService {
           if (remainingActiveUsers > 0 && nextExpiry) {
             let subExpiryEnd: Date | null = null;
             if (account.subscription_expiry) {
-              subExpiryEnd = new Date(account.subscription_expiry);
-              if (subExpiryEnd.getHours() === 0 && subExpiryEnd.getMinutes() === 0) {
-                subExpiryEnd.setHours(23, 59, 59, 999);
+              const m = moment(account.subscription_expiry).tz('Asia/Jakarta');
+              if (m.hours() === 0 && m.minutes() === 0) {
+                m.hours(23).minutes(59).seconds(59).milliseconds(999);
               }
+              subExpiryEnd = m.toDate();
             }
             accountUpdateData.batch_end_date = subExpiryEnd && nextExpiry > subExpiryEnd ? subExpiryEnd : nextExpiry;
           } else {
@@ -1182,10 +1184,11 @@ export class AccountService {
       if (remainingCount > 0 && nextExpiry) {
         let subExpiryEnd: Date | null = null;
         if (account.subscription_expiry) {
-          subExpiryEnd = new Date(account.subscription_expiry);
-          if (subExpiryEnd.getHours() === 0 && subExpiryEnd.getMinutes() === 0) {
-            subExpiryEnd.setHours(23, 59, 59, 999);
+          const m = moment(account.subscription_expiry).tz('Asia/Jakarta');
+          if (m.hours() === 0 && m.minutes() === 0) {
+            m.hours(23).minutes(59).seconds(59).milliseconds(999);
           }
+          subExpiryEnd = m.toDate();
         }
         const cappedBatchEnd = subExpiryEnd && nextExpiry > subExpiryEnd ? subExpiryEnd : nextExpiry;
 
