@@ -126,11 +126,17 @@ function SuccessContent() {
     try {
       await api.post('/public/voucher/redeem', { voucher_code: code })
       markVoucherAsClaimed(code)
-      toast.success('Voucher berhasil diklaim! Membuka halaman akun...')
-      // Open redeem page in a new tab
-      window.open(`/redeem?code=${code}`, '_blank')
+      toast.success('Voucher berhasil diklaim! Mengalihkan ke halaman akun...')
+      // Direct navigation in the same window to prevent mobile popup blocking
+      window.location.href = `/redeem?code=${encodeURIComponent(code)}`
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Gagal mengklaim voucher. Coba gunakan halaman Redeem.')
+      const errorMsg = error.response?.data?.message || ''
+      if (errorMsg.toLowerCase().includes('sudah digunakan')) {
+        toast.info('Voucher sudah diklaim, mengalihkan ke halaman akun...')
+        window.location.href = `/redeem?code=${encodeURIComponent(code)}`
+        return
+      }
+      toast.error(errorMsg || 'Gagal mengklaim voucher. Coba gunakan halaman Redeem.')
       setIsClaiming(false)
     }
   }
@@ -190,24 +196,22 @@ function SuccessContent() {
                         >
                           <Copy className="size-4" />
                         </button>
-                        <a
-                          href={`/redeem?code=${vCode}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <Link
+                          href={`/redeem?code=${encodeURIComponent(vCode)}`}
                           className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl text-xs flex items-center gap-1 shadow-sm transition-all"
                         >
                           <Zap className="size-3" /> Klaim
-                        </a>
+                        </Link>
                       </div>
                     </div>
                   ))}
                 </div>
-                {/* Klaim Semua button — opens history page in new tab, pre-filled with buyer phone */}
+                {/* Klaim Semua button — opens history page in same tab, pre-filled with buyer phone */}
                 <button
                   type="button"
                   onClick={() => {
                     const targetUrl = buyerWhatsapp ? `/history?identifier=${encodeURIComponent(buyerWhatsapp)}` : '/history'
-                    window.open(targetUrl, '_blank')
+                    window.location.href = targetUrl
                   }}
                   className="w-full mb-6 px-4 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-2xl text-sm flex items-center justify-center gap-2 transition-all duration-300 shadow-md active:scale-95"
                 >
@@ -230,36 +234,55 @@ function SuccessContent() {
             )}
             
             {/* Primary: Claim directly from this page for single voucher */}
-            {voucherCodes.length <= 1 && code && voucherData?.status === 'UNUSED' && (
-              <button
-                onClick={handleClaim}
-                disabled={isClaiming}
-                className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl transition-all duration-300 shadow-md active:scale-95 flex items-center justify-center gap-2 text-sm"
-              >
-                {isClaiming ? (
-                  <><Loader2 className="size-4 animate-spin" /> Memproses...</>
-                ) : (
-                  <><Zap className="size-4" /> Claim Sekarang</>
-                )}
-              </button>
+            {voucherCodes.length <= 1 && code && (
+              voucherData?.status === 'UNUSED' ? (
+                <button
+                  onClick={handleClaim}
+                  disabled={isClaiming}
+                  className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl transition-all duration-300 shadow-md active:scale-95 flex items-center justify-center gap-2 text-sm"
+                >
+                  {isClaiming ? (
+                    <><Loader2 className="size-4 animate-spin" /> Memproses...</>
+                  ) : (
+                    <><Zap className="size-4" /> Claim Sekarang</>
+                  )}
+                </button>
+              ) : voucherData?.status === 'USED' ? (
+                <Link
+                  href={`/redeem?code=${encodeURIComponent(code)}`}
+                  className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl transition-all duration-300 shadow-md active:scale-95 flex items-center justify-center gap-2 text-sm"
+                >
+                  <Zap className="size-4" /> Lihat Detail Akun
+                </Link>
+              ) : null
             )}
           </div>
 
-          <p className="text-sm text-slate-500 mb-10 font-medium px-4 text-center">
+          <p className="text-sm text-slate-500 mb-6 font-medium px-4 text-center">
             simpan kode voucher ini untuk Akses Akun dan Kode OTP Email
           </p>
 
-          {voucherData?.expired_at && (
-            <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-xl flex items-start gap-3 text-left">
+          {voucherData?.status === 'USED' ? (
+            <div className="mb-6 p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-start gap-3 text-left">
+              <BadgeCheck className="size-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-widest mb-1">Voucher Berhasil Diklaim</p>
+                <p className="text-xs text-emerald-800 dark:text-emerald-200 font-medium leading-relaxed">
+                  Akun Anda sudah aktif. Klik tombol <span className="font-bold">Lihat Detail Akun</span> di atas untuk melihat email, password, dan panduan login.
+                </p>
+              </div>
+            </div>
+          ) : voucherData?.expired_at ? (
+            <div className="mb-6 p-4 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-xl flex items-start gap-3 text-left">
               <AlertCircle className="size-5 text-orange-500 shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs font-bold text-orange-600 uppercase tracking-widest mb-1">Peringatan Penting</p>
-                <p className="text-xs text-orange-800 font-medium leading-relaxed">
+                <p className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase tracking-widest mb-1">Peringatan Penting</p>
+                <p className="text-xs text-orange-800 dark:text-orange-200 font-medium leading-relaxed">
                   Segera klaim voucher Anda sebelum <span className="font-bold">{new Date(voucherData.expired_at).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })}</span> agar tidak hangus.
                 </p>
               </div>
             </div>
-          )}
+          ) : null}
 
           <div className="pt-6 border-t border-border flex flex-col items-center justify-center gap-4">
             <Link

@@ -26,18 +26,19 @@ export default function RedeemPage() {
   const searchParams = useSearchParams()
   const urlCode = searchParams.get('code')
 
-  const handleSearch = async (e?: React.FormEvent) => {
+  const handleSearch = async (e?: React.FormEvent, customCode?: string) => {
     if (e) e.preventDefault()
-    if (!code) return
+    const targetCode = (customCode || code).trim()
+    if (!targetCode) return
 
     setIsLoading(true)
     setResult(null)
     try {
-      const { data } = await api.get(`/public/voucher/${code}`)
+      const { data } = await api.get(`/public/voucher/${targetCode}`)
       setResult(data)
       if (data?.voucher?.status === 'USED' && data?.voucher?.access_token) {
         setAccessToken(data.voucher.access_token)
-        markVoucherAsClaimed(code)
+        markVoucherAsClaimed(targetCode)
       } else {
         setAccessToken(null)
       }
@@ -50,22 +51,22 @@ export default function RedeemPage() {
 
   useEffect(() => {
     if (urlCode && !result && !isLoading) {
-      setCode(urlCode.toUpperCase())
-      const timer = setTimeout(() => {
-        handleSearch()
-      }, 500)
-      return () => clearTimeout(timer)
+      const cleanCode = urlCode.toUpperCase()
+      setCode(cleanCode)
+      handleSearch(undefined, cleanCode)
     }
   }, [urlCode, tenantId])
 
   const handleRedeem = async () => {
+    const targetCode = code.trim()
+    if (!targetCode) return
     setIsLoading(true)
     try {
-      await api.post('/public/voucher/redeem', { voucher_code: code })
-      markVoucherAsClaimed(code)
+      await api.post('/public/voucher/redeem', { voucher_code: targetCode })
+      markVoucherAsClaimed(targetCode)
       toast.success('Voucher berhasil diredeem!')
       // Refresh data after success to ensure we have the full, parsed account object
-      await handleSearch()
+      await handleSearch(undefined, targetCode)
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Gagal meredeem voucher')
       setIsLoading(false)
